@@ -1,0 +1,35 @@
+id = "origin"
+name = "Origin"
+starting_room = "origin_plaza"
+
+[[items]]
+id = "rusty_key"
+name = "Rusty Key"
+description = "A small iron key mottled with reddish-brown rust."
+
+[[rooms]]
+id = "origin_plaza"
+name = "Origin Plaza"
+description = "The arrival zone of this world."
+items = ["rusty_key"]
+
+[rooms.exits]
+north = "forest_path"
+east = "rusty_tavern"
+
+[[rooms]]
+id = "forest_path"
+name = "Forest Path"
+description = "Tall trees crowd around a narrow beaten trail."
+
+[rooms.exits]
+south = "origin_plaza"
+
+[[rooms]]
+id = "rusty_tavern"
+name = "Rusty Tavern"
+description = "A worn but welcoming tavern. A fire crackles beside an old wooden bar."
+
+[rooms.exits]
+west = "origin_plaza"
+

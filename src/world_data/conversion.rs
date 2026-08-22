@@ -1,0 +1,177 @@
+use std::collections::HashMap;
+
+use super::definition::{ItemDefinition, RoomDefinition};
+use crate::game::direction::Direction;
+use crate::game::ids::{ItemId, RoomId, WorldId};
+use crate::game::item::Item;
+use crate::game::room::Room;
+use crate::game::world::World;
+use crate::world_data::definition::WorldDefinition;
+
+pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
+    let mut exits = HashMap::new();
+    for (direction, destination) in definition.exits {
+        let direction = Direction::from_str(&direction)
+            .ok_or_else(|| format!("unknown direction '{direction}'"))?;
+
+        exits.insert(direction, RoomId(destination));
+    }
+    let items = definition.items.into_iter().map(ItemId).collect();
+    Ok(Room {
+        id: RoomId(definition.id),
+        name: definition.name,
+        description: definition.description,
+        items,
+        exits,
+    })
+}
+
+pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
+    let mut rooms = HashMap::new();
+    for room_definition in definition.rooms {
+        let room = convert_room(room_definition)?;
+        rooms.insert(room.id.clone(), room);
+    }
+
+    let mut items = HashMap::new();
+    for item_definition in definition.items {
+        let item = convert_item(item_definition);
+        items.insert(item.id.clone(), item);
+    }
+
+    Ok(World {
+        id: WorldId(definition.id),
+        name: definition.name,
+        starting_room: RoomId(definition.starting_room),
+        items,
+        rooms,
+    })
+}
+
+pub fn convert_item(definition: ItemDefinition) -> Item {
+    Item {
+        id: ItemId(definition.id),
+        name: definition.name,
+        description: definition.description,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world_data::definition::{ItemDefinition, RoomDefinition};
+    use std::collections::HashMap;
+
+    fn valid_room_definition() -> RoomDefinition {
+        let mut exits = HashMap::new();
+        exits.insert("north".to_string(), "next_room".to_string());
+
+        RoomDefinition {
+            id: "start".to_string(),
+            name: "Starting Room".to_string(),
+            description: "A test room.".to_string(),
+            items: vec!["test_item".to_string()],
+            exits,
+        }
+    }
+
+    fn valid_world_definition() -> WorldDefinition {
+        WorldDefinition {
+            id: "test_world".to_string(),
+            name: "Test World".to_string(),
+            starting_room: "start".to_string(),
+            items: vec![ItemDefinition {
+                id: "test_item".to_string(),
+                name: "Test Item".to_string(),
+                description: "An item used for testing.".to_string(),
+            }],
+            rooms: vec![
+                valid_room_definition(),
+                RoomDefinition {
+                    id: "next_room".to_string(),
+                    name: "Next Room".to_string(),
+                    description: "Another test room.".to_string(),
+                    items: vec![],
+                    exits: HashMap::new(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn valid_world_definition_converts() {
+        let definition = valid_world_definition();
+
+        let world = convert_world(definition).expect("valid world should convert");
+
+        let item = world
+            .items
+            .get(&ItemId("test_item".to_string()))
+            .expect("converted item should exist");
+
+        assert_eq!(world.id, WorldId("test_world".to_string()));
+        assert_eq!(world.name, "Test World");
+        assert_eq!(world.starting_room, RoomId("start".to_string()));
+        assert_eq!(world.rooms.len(), 2);
+        assert_eq!(world.items.len(), 1);
+        assert_eq!(item.name, "Test Item");
+        assert!(world.rooms.contains_key(&RoomId("start".to_string())));
+        assert!(world.rooms.contains_key(&RoomId("next_room".to_string())));
+    }
+
+    #[test]
+    fn invalid_room_prevents_world_conversion() {
+        let mut definition = valid_world_definition();
+
+        definition.rooms[0]
+            .exits
+            .insert("sideways".to_string(), "next_room".to_string());
+
+        let error =
+            convert_world(definition).expect_err("world containing an invalid room should fail");
+
+        assert_eq!(error, "unknown direction 'sideways'");
+    }
+
+    #[test]
+    fn valid_room_definition_converts() {
+        let room_definition = valid_room_definition();
+        let room = convert_room(room_definition).expect("valid room should convert");
+
+        assert_eq!(room.id, RoomId("start".to_string()));
+        assert_eq!(room.name, "Starting Room");
+        assert_eq!(room.items, vec![ItemId("test_item".to_string())]);
+        assert_eq!(
+            room.exits.get(&Direction::North),
+            Some(&RoomId("next_room".to_string()))
+        );
+    }
+
+    #[test]
+    fn invalid_direction_does_not_convert() {
+        let mut room_definition = valid_room_definition();
+
+        room_definition
+            .exits
+            .insert("sideways".to_string(), "start".to_string());
+
+        let error = convert_room(room_definition).expect_err("unknown direction should fail");
+
+        assert_eq!(error, "unknown direction 'sideways'");
+    }
+
+    #[test]
+    fn item_definition_converts() {
+        let definition = ItemDefinition {
+            id: "test_item".to_string(),
+            name: "Test Item".to_string(),
+            description: "An item used for testing.".to_string(),
+        };
+
+        let item = convert_item(definition);
+
+        assert_eq!(item.id, ItemId("test_item".to_string()));
+        assert_eq!(item.name, "Test Item");
+        assert_eq!(item.description, "An item used for testing.");
+    }
+}
