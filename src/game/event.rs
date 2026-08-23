@@ -1,22 +1,26 @@
+use super::command::TargetKind;
 use super::direction::Direction;
-use super::ids::{CharacterId, ItemId, RoomId};
+use super::ids::{CharacterId, FeatureId, ItemId, RoomId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TakeFailureReason {
     NotFound,
-    Ambiguous,
+    Ambiguous { match_count: usize },
+    OrdinalOutOfRange { requested: usize, available: usize },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DropFailureReason {
     NotFound,
-    Ambiguous,
+    Ambiguous { match_count: usize },
+    OrdinalOutOfRange { requested: usize, available: usize },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExamineFailureReason {
     NotFound,
-    Ambiguous,
+    Ambiguous { kinds: Vec<TargetKind> },
+    OrdinalOutOfRange { requested: usize, available: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,8 +30,22 @@ pub struct ObservedItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedFeature {
+    pub id: FeatureId,
+    pub name: String,
+    pub room_description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExaminedItem {
     pub id: ItemId,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExaminedFeature {
+    pub id: FeatureId,
     pub name: String,
     pub description: String,
 }
@@ -39,6 +57,7 @@ pub enum GameEvent {
         name: String,
         description: String,
         items: Vec<ObservedItem>,
+        features: Vec<ObservedFeature>,
         exits: Vec<Direction>,
     },
 
@@ -88,6 +107,11 @@ pub enum GameEvent {
     ItemExamined {
         character_id: CharacterId,
         item: ExaminedItem,
+    },
+
+    FeatureExamined {
+        character_id: CharacterId,
+        feature: ExaminedFeature,
     },
 
     ExamineFailed {

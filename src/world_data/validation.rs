@@ -152,6 +152,26 @@ fn validate_room_item_references(world: &WorldDefinition) -> Result<(), String> 
     Ok(())
 }
 
+fn validate_room_feature_references(world: &WorldDefinition) -> Result<(), String> {
+    for room in &world.rooms {
+        for feature_id in &room.features {
+            let feature_exists = world
+                .features
+                .iter()
+                .any(|feature| &feature.id == feature_id);
+
+            if !feature_exists {
+                return Err(format!(
+                    "Room '{}' references missing feature '{}'",
+                    room.id, feature_id
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_unique_item_placements(world: &WorldDefinition) -> Result<(), String> {
     let mut placed_items = HashSet::new();
 
@@ -166,10 +186,60 @@ fn validate_unique_item_placements(world: &WorldDefinition) -> Result<(), String
     Ok(())
 }
 
+fn validate_feature_ids(world: &WorldDefinition) -> Result<(), String> {
+    for feature in &world.features {
+        if feature.id.trim().is_empty() {
+            return Err(format!("Feature '{}' has no id", feature.name));
+        }
+
+        if !is_valid_id(&feature.id) {
+            return Err(format!(
+                "Id for feature '{}' has invalid characters: {}",
+                feature.name, feature.id
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_unique_feature_ids(world: &WorldDefinition) -> Result<(), String> {
+    let mut seen = HashSet::new();
+
+    for feature in &world.features {
+        if !seen.insert(&feature.id) {
+            return Err(format!(
+                "The feature named {} has the duplicate id: {}",
+                feature.name, feature.id
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_unique_feature_placements(world: &WorldDefinition) -> Result<(), String> {
+    let mut placed_features = HashSet::new();
+
+    for room in &world.rooms {
+        for feature_id in &room.features {
+            if !placed_features.insert(feature_id) {
+                return Err(format!("Feature '{}' is placed more than once", feature_id));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_world_id(world)?;
     validate_item_ids(world)?;
     validate_unique_item_ids(world)?;
+    validate_feature_ids(world)?;
+    validate_unique_feature_ids(world)?;
+    validate_room_feature_references(world)?;
+    validate_unique_feature_placements(world)?;
     validate_room_item_references(world)?;
     validate_unique_item_placements(world)?;
     validate_non_empty_room_ids(world)?;
@@ -185,7 +255,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world_data::definition::{ItemDefinition, RoomDefinition};
+    use crate::world_data::definition::{FeatureDefinition, ItemDefinition, RoomDefinition};
     use std::collections::HashMap;
 
     fn valid_world() -> WorldDefinition {
@@ -194,11 +264,13 @@ mod tests {
             name: "Test World".to_string(),
             starting_room: "start".to_string(),
             items: vec![],
+            features: vec![],
             rooms: vec![RoomDefinition {
                 id: "start".to_string(),
                 name: "Starting Room".to_string(),
                 description: "A test room.".to_string(),
                 items: vec![],
+                features: vec![],
                 exits: HashMap::new(),
             }],
         }
@@ -283,6 +355,7 @@ mod tests {
             name: "New Room".to_string(),
             description: "A second test room.".to_string(),
             items: vec![],
+            features: vec![],
             exits: HashMap::new(),
         });
 
@@ -410,6 +483,7 @@ mod tests {
             name: "Second Room".to_string(),
             description: "Another room".to_string(),
             items: vec!["test_item".to_string()],
+            features: vec![],
             exits: HashMap::new(),
         });
 
@@ -418,6 +492,111 @@ mod tests {
         assert_eq!(
             result,
             Err("Item 'test_item' is placed more than once".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_feature_id_fails_validation() {
+        let mut world = valid_world();
+
+        world.features.push(FeatureDefinition {
+            id: "  ".to_string(),
+            name: "Test Feature".to_string(),
+            room_description: "A test feature stands here.".to_string(),
+            description: "A feature used for testing.".to_string(),
+        });
+
+        let result = validate_world(&world);
+
+        assert_eq!(result, Err("Feature 'Test Feature' has no id".to_string()));
+    }
+
+    #[test]
+    fn invalid_feature_id_fails_validation() {
+        let mut world = valid_world();
+
+        world.features.push(FeatureDefinition {
+            id: "bad!".to_string(),
+            name: "Test Feature".to_string(),
+            room_description: "A test feature stands here.".to_string(),
+            description: "A feature used for testing.".to_string(),
+        });
+
+        let result = validate_world(&world);
+
+        assert_eq!(
+            result,
+            Err("Id for feature 'Test Feature' has invalid characters: bad!".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_feature_ids_fail_validation() {
+        let mut world = valid_world();
+
+        world.features.push(FeatureDefinition {
+            id: "test_feature".to_string(),
+            name: "First Feature".to_string(),
+            room_description: "The first feature stands here.".to_string(),
+            description: "The first feature.".to_string(),
+        });
+
+        world.features.push(FeatureDefinition {
+            id: "test_feature".to_string(),
+            name: "Second Feature".to_string(),
+            room_description: "The second feature stands here.".to_string(),
+            description: "The second feature.".to_string(),
+        });
+
+        let result = validate_world(&world);
+
+        assert_eq!(
+            result,
+            Err("The feature named Second Feature has the duplicate id: test_feature".to_string())
+        );
+    }
+
+    #[test]
+    fn room_feature_reference_must_exist() {
+        let mut world = valid_world();
+
+        world.rooms[0].features.push("missing_feature".to_string());
+
+        let result = validate_world(&world);
+
+        assert_eq!(
+            result,
+            Err("Room 'start' references missing feature 'missing_feature'".to_string())
+        );
+    }
+
+    #[test]
+    fn feature_cannot_be_placed_in_multiple_rooms() {
+        let mut world = valid_world();
+
+        world.features.push(FeatureDefinition {
+            id: "test_feature".to_string(),
+            name: "Test Feature".to_string(),
+            room_description: "A test feature stands here.".to_string(),
+            description: "A feature used for testing.".to_string(),
+        });
+
+        world.rooms[0].features.push("test_feature".to_string());
+
+        world.rooms.push(RoomDefinition {
+            id: "second_room".to_string(),
+            name: "Second Room".to_string(),
+            description: "Another room.".to_string(),
+            items: vec![],
+            features: vec!["test_feature".to_string()],
+            exits: HashMap::new(),
+        });
+
+        let result = validate_world(&world);
+
+        assert_eq!(
+            result,
+            Err("Feature 'test_feature' is placed more than once".to_string())
         );
     }
 }

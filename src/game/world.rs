@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use super::ids::{ItemId, RoomId, WorldId};
+use super::feature::RoomFeature;
+use super::ids::{FeatureId, ItemId, RoomId, WorldId};
 use super::item::Item;
 use super::room::Room;
 
@@ -10,6 +11,7 @@ pub struct World {
     pub name: String,
     pub starting_room: RoomId,
     pub items: HashMap<ItemId, Item>,
+    pub features: HashMap<FeatureId, RoomFeature>,
     pub rooms: HashMap<RoomId, Room>,
 }
 
@@ -25,6 +27,10 @@ impl World {
     pub fn item(&self, id: &ItemId) -> Option<&Item> {
         self.items.get(id)
     }
+
+    pub fn feature(&self, id: &FeatureId) -> Option<&RoomFeature> {
+        self.features.get(id)
+    }
 }
 
 #[cfg(test)]
@@ -38,6 +44,7 @@ mod tests {
             name: "Starting Room".to_string(),
             description: "A test room.".to_string(),
             items: vec![],
+            features: vec![],
             exits: HashMap::new(),
         }
     }
@@ -55,11 +62,22 @@ mod tests {
         let mut items = HashMap::new();
         items.insert(item.id.clone(), item);
 
+        let feature = RoomFeature {
+            id: FeatureId("test_feature".to_string()),
+            name: "Test Feature".to_string(),
+            room_description: "A test feature stands here.".to_string(),
+            description: "A feature used for testing.".to_string(),
+        };
+
+        let mut features = HashMap::new();
+        features.insert(feature.id.clone(), feature);
+
         World {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
             items,
+            features,
             rooms,
         }
     }
@@ -115,5 +133,23 @@ mod tests {
                 .items,
             vec![ItemId("test_item".to_string())]
         );
+    }
+
+    #[test]
+    fn existing_feature_returns_borrowed_feature() {
+        let world = valid_world();
+
+        let feature = world
+            .feature(&FeatureId("test_feature".to_string()))
+            .expect("feature should exist");
+
+        assert_eq!(feature.name, "Test Feature");
+    }
+
+    #[test]
+    fn missing_feature_returns_none() {
+        let world = valid_world();
+
+        assert!(world.feature(&FeatureId("missing".to_string())).is_none());
     }
 }

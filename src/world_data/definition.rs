@@ -9,6 +9,8 @@ pub struct WorldDefinition {
 
     #[serde(default)]
     pub items: Vec<ItemDefinition>,
+    #[serde(default)]
+    pub features: Vec<FeatureDefinition>,
 
     pub rooms: Vec<RoomDefinition>,
 }
@@ -21,6 +23,8 @@ pub struct RoomDefinition {
 
     #[serde(default)]
     pub items: Vec<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
 
     pub exits: HashMap<String, String>,
 }
@@ -29,5 +33,13 @@ pub struct RoomDefinition {
 pub struct ItemDefinition {
     pub id: String,
     pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeatureDefinition {
+    pub id: String,
+    pub name: String,
+    pub room_description: String,
     pub description: String,
 }

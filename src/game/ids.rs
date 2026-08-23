@@ -9,3 +9,6 @@ pub struct CharacterId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FeatureId(pub String);

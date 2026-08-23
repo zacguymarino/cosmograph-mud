@@ -7,11 +7,29 @@ id = "rusty_key"
 name = "Rusty Key"
 description = "A small iron key mottled with reddish-brown rust."
 
+[[items]]
+id = "forest_rusty_key"
+name = "Rusty Key"
+description = "A long-neglected key, green with age beneath its patches of rust."
+
+[[features]]
+id = "founders_plaque"
+name = "Founder's Plaque"
+room_description = "The Founder's Plaque is displayed elegantly on a central podium."
+description = "A weathered bronze plaque commemorating the founding of Origin Plaza."
+
+[[features]]
+id = "rusty_key_relief"
+name = "Rusty-Key"
+room_description = "A relief carved into the podium depicts an oversized rusty key."
+description = "The stone relief portrays a rusty key surrounded by an unfamiliar constellation."
+
 [[rooms]]
 id = "origin_plaza"
 name = "Origin Plaza"
 description = "The arrival zone of this world."
 items = ["rusty_key"]
+features = ["founders_plaque", "rusty_key_relief"]
 
 [rooms.exits]
 north = "forest_path"
@@ -21,6 +39,7 @@ east = "rusty_tavern"
 id = "forest_path"
 name = "Forest Path"
 description = "Tall trees crowd around a narrow beaten trail."
+items = ["forest_rusty_key"]
 
 [rooms.exits]
 south = "origin_plaza"

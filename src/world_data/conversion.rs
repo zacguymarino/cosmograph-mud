@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use super::definition::{ItemDefinition, RoomDefinition};
+use super::definition::{FeatureDefinition, ItemDefinition, RoomDefinition};
 use crate::game::direction::Direction;
-use crate::game::ids::{ItemId, RoomId, WorldId};
+use crate::game::feature::RoomFeature;
+use crate::game::ids::{FeatureId, ItemId, RoomId, WorldId};
 use crate::game::item::Item;
 use crate::game::room::Room;
 use crate::game::world::World;
@@ -17,11 +18,13 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
         exits.insert(direction, RoomId(destination));
     }
     let items = definition.items.into_iter().map(ItemId).collect();
+    let features = definition.features.into_iter().map(FeatureId).collect();
     Ok(Room {
         id: RoomId(definition.id),
         name: definition.name,
         description: definition.description,
         items,
+        features,
         exits,
     })
 }
@@ -39,11 +42,18 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         items.insert(item.id.clone(), item);
     }
 
+    let mut features = HashMap::new();
+    for feature_definition in definition.features {
+        let feature = convert_feature(feature_definition);
+        features.insert(feature.id.clone(), feature);
+    }
+
     Ok(World {
         id: WorldId(definition.id),
         name: definition.name,
         starting_room: RoomId(definition.starting_room),
         items,
+        features,
         rooms,
     })
 }
@@ -56,10 +66,19 @@ pub fn convert_item(definition: ItemDefinition) -> Item {
     }
 }
 
+pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
+    RoomFeature {
+        id: FeatureId(definition.id),
+        name: definition.name,
+        room_description: definition.room_description,
+        description: definition.description,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world_data::definition::{ItemDefinition, RoomDefinition};
+    use crate::world_data::definition::{FeatureDefinition, ItemDefinition, RoomDefinition};
     use std::collections::HashMap;
 
     fn valid_room_definition() -> RoomDefinition {
@@ -71,6 +90,7 @@ mod tests {
             name: "Starting Room".to_string(),
             description: "A test room.".to_string(),
             items: vec!["test_item".to_string()],
+            features: vec!["test_feature".to_string()],
             exits,
         }
     }
@@ -85,6 +105,12 @@ mod tests {
                 name: "Test Item".to_string(),
                 description: "An item used for testing.".to_string(),
             }],
+            features: vec![FeatureDefinition {
+                id: "test_feature".to_string(),
+                name: "Test Feature".to_string(),
+                room_description: "A test feature stands here.".to_string(),
+                description: "A feature used for testing.".to_string(),
+            }],
             rooms: vec![
                 valid_room_definition(),
                 RoomDefinition {
@@ -92,6 +118,7 @@ mod tests {
                     name: "Next Room".to_string(),
                     description: "Another test room.".to_string(),
                     items: vec![],
+                    features: vec![],
                     exits: HashMap::new(),
                 },
             ],
@@ -108,13 +135,19 @@ mod tests {
             .items
             .get(&ItemId("test_item".to_string()))
             .expect("converted item should exist");
+        let feature = world
+            .features
+            .get(&FeatureId("test_feature".to_string()))
+            .expect("converted feature should exist");
 
         assert_eq!(world.id, WorldId("test_world".to_string()));
         assert_eq!(world.name, "Test World");
         assert_eq!(world.starting_room, RoomId("start".to_string()));
         assert_eq!(world.rooms.len(), 2);
         assert_eq!(world.items.len(), 1);
+        assert_eq!(world.features.len(), 1);
         assert_eq!(item.name, "Test Item");
+        assert_eq!(feature.name, "Test Feature");
         assert!(world.rooms.contains_key(&RoomId("start".to_string())));
         assert!(world.rooms.contains_key(&RoomId("next_room".to_string())));
     }
@@ -145,6 +178,7 @@ mod tests {
             room.exits.get(&Direction::North),
             Some(&RoomId("next_room".to_string()))
         );
+        assert_eq!(room.features, vec![FeatureId("test_feature".to_string())]);
     }
 
     #[test]
@@ -173,5 +207,22 @@ mod tests {
         assert_eq!(item.id, ItemId("test_item".to_string()));
         assert_eq!(item.name, "Test Item");
         assert_eq!(item.description, "An item used for testing.");
+    }
+
+    #[test]
+    fn feature_definition_converts() {
+        let definition = FeatureDefinition {
+            id: "test_feature".to_string(),
+            name: "Test Feature".to_string(),
+            room_description: "A test feature stands here.".to_string(),
+            description: "A feature used for testing.".to_string(),
+        };
+
+        let feature = convert_feature(definition);
+
+        assert_eq!(feature.id, FeatureId("test_feature".to_string()));
+        assert_eq!(feature.name, "Test Feature");
+        assert_eq!(feature.room_description, "A test feature stands here.");
+        assert_eq!(feature.description, "A feature used for testing.");
     }
 }

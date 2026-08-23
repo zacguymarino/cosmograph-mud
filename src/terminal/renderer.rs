@@ -1,3 +1,4 @@
+use crate::game::command::TargetKind;
 use crate::game::direction::Direction;
 use crate::game::event::{DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason};
 
@@ -16,6 +17,7 @@ pub fn render_event(event: &GameEvent) -> String {
             name,
             description,
             items,
+            features,
             exits,
             ..
         } => {
@@ -38,7 +40,20 @@ pub fn render_event(event: &GameEvent) -> String {
                 item_names.join(", ")
             };
 
-            format!("{name}\n{description}\nItems: {items_text}\nExits: {exits_text}")
+            let feature_descriptions: Vec<&str> = features
+                .iter()
+                .map(|feature| feature.room_description.as_str())
+                .collect();
+
+            let feature_paragraph = if feature_descriptions.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", feature_descriptions.join("\n"))
+            };
+
+            format!(
+                "{name}\n{description}{feature_paragraph}\nItems: {items_text}\nExits: {exits_text}"
+            )
         }
 
         GameEvent::CharacterMoved { direction, .. } => {
@@ -63,10 +78,28 @@ pub fn render_event(event: &GameEvent) -> String {
 
         GameEvent::TakeFailed {
             query,
-            reason: TakeFailureReason::Ambiguous,
+            reason: TakeFailureReason::Ambiguous { match_count },
             ..
         } => {
-            format!("More than one item matches '{query}'.")
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {query} (item)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one item matches '{query}':\n{choices}\nTry 'take 1 {query}' or another listed number."
+            )
+        }
+
+        GameEvent::TakeFailed {
+            query,
+            reason:
+                TakeFailureReason::OrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => {
+            format!("There is no #{requested} '{query}' here; {available} matched.")
         }
 
         GameEvent::InventoryObserved { items } => {
@@ -97,14 +130,36 @@ pub fn render_event(event: &GameEvent) -> String {
 
         GameEvent::DropFailed {
             query,
-            reason: DropFailureReason::Ambiguous,
+            reason: DropFailureReason::Ambiguous { match_count },
             ..
         } => {
-            format!("More than one carried item matches '{query}'.")
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {query} (item)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one carried item matches '{query}':\n{choices}\nTry 'drop 1 {query}' or another listed number."
+            )
+        }
+
+        GameEvent::DropFailed {
+            query,
+            reason:
+                DropFailureReason::OrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => {
+            format!("You are not carrying a #{requested} '{query}'; {available} matched.")
         }
 
         GameEvent::ItemExamined { item, .. } => {
             format!("{}\n{}", item.name, item.description)
+        }
+
+        GameEvent::FeatureExamined { feature, .. } => {
+            format!("{}\n{}", feature.name, feature.description)
         }
 
         GameEvent::ExamineFailed {
@@ -117,10 +172,36 @@ pub fn render_event(event: &GameEvent) -> String {
 
         GameEvent::ExamineFailed {
             query,
-            reason: ExamineFailureReason::Ambiguous,
+            reason: ExamineFailureReason::Ambiguous { kinds },
             ..
         } => {
-            format!("More than one accessible item matches '{query}'.")
+            let choices = kinds
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| {
+                    let kind_name = match kind {
+                        TargetKind::Item => "item",
+                        TargetKind::Feature => "feature",
+                    };
+                    format!("{}. {query} ({kind_name})", index + 1)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one accessible target matches '{query}':\n{choices}\nTry 'examine 1 {query}', 'examine item {query}', or 'examine feature {query}'."
+            )
+        }
+
+        GameEvent::ExamineFailed {
+            query,
+            reason:
+                ExamineFailureReason::OrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => {
+            format!("There is no accessible #{requested} '{query}'; {available} matched.")
         }
     }
 }
@@ -128,8 +209,8 @@ pub fn render_event(event: &GameEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::event::{ExaminedItem, ObservedItem};
-    use crate::game::ids::{CharacterId, ItemId, RoomId};
+    use crate::game::event::{ExaminedFeature, ExaminedItem, ObservedFeature, ObservedItem};
+    use crate::game::ids::{CharacterId, FeatureId, ItemId, RoomId};
 
     #[test]
     fn room_observation_renders_room_details() {
@@ -141,12 +222,34 @@ mod tests {
                 id: ItemId("test_item".to_string()),
                 name: "Test Item".to_string(),
             }],
+            features: vec![ObservedFeature {
+                id: FeatureId("test_feature".to_string()),
+                name: "Test Feature".to_string(),
+                room_description: "A test feature stands here.".to_string(),
+            }],
             exits: vec![Direction::West, Direction::North, Direction::East],
         };
 
         assert_eq!(
             render_event(&event),
-            "Starting Room\nA test room.\nItems: Test Item\nExits: east, north, west"
+            "Starting Room\nA test room.\nA test feature stands here.\nItems: Test Item\nExits: east, north, west"
+        );
+    }
+
+    #[test]
+    fn room_without_features_omits_feature_paragraph() {
+        let event = GameEvent::RoomObserved {
+            room_id: RoomId("start".to_string()),
+            name: "Starting Room".to_string(),
+            description: "A test room.".to_string(),
+            items: vec![],
+            features: vec![],
+            exits: vec![],
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Starting Room\nA test room.\nItems: none\nExits: none"
         );
     }
 
@@ -205,10 +308,13 @@ mod tests {
             character_id: CharacterId("player".to_string()),
             room_id: RoomId("start".to_string()),
             query: "key".to_string(),
-            reason: TakeFailureReason::Ambiguous,
+            reason: TakeFailureReason::Ambiguous { match_count: 2 },
         };
 
-        assert_eq!(render_event(&event), "More than one item matches 'key'.");
+        assert_eq!(
+            render_event(&event),
+            "More than one item matches 'key':\n1. key (item)\n2. key (item)\nTry 'take 1 key' or another listed number."
+        );
     }
 
     #[test]
@@ -255,12 +361,12 @@ mod tests {
             character_id: CharacterId("player".to_string()),
             room_id: RoomId("start".to_string()),
             query: "key".to_string(),
-            reason: DropFailureReason::Ambiguous,
+            reason: DropFailureReason::Ambiguous { match_count: 2 },
         };
 
         assert_eq!(
             render_event(&event),
-            "More than one carried item matches 'key'."
+            "More than one carried item matches 'key':\n1. key (item)\n2. key (item)\nTry 'drop 1 key' or another listed number."
         );
     }
 
@@ -278,6 +384,23 @@ mod tests {
         assert_eq!(
             render_event(&event),
             "Rusty Key\nA small iron key covered with rust."
+        );
+    }
+
+    #[test]
+    fn examined_feature_renders_description() {
+        let event = GameEvent::FeatureExamined {
+            character_id: CharacterId("player".to_string()),
+            feature: ExaminedFeature {
+                id: FeatureId("founders_plaque".to_string()),
+                name: "Founder's Plaque".to_string(),
+                description: "A weathered bronze plaque.".to_string(),
+            },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Founder's Plaque\nA weathered bronze plaque."
         );
     }
 
@@ -300,12 +423,14 @@ mod tests {
         let event = GameEvent::ExamineFailed {
             character_id: CharacterId("player".to_string()),
             query: "key".to_string(),
-            reason: ExamineFailureReason::Ambiguous,
+            reason: ExamineFailureReason::Ambiguous {
+                kinds: vec![TargetKind::Item, TargetKind::Feature],
+            },
         };
 
         assert_eq!(
             render_event(&event),
-            "More than one accessible item matches 'key'."
+            "More than one accessible target matches 'key':\n1. key (item)\n2. key (feature)\nTry 'examine 1 key', 'examine item key', or 'examine feature key'."
         );
     }
 }
