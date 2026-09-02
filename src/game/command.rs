@@ -5,6 +5,7 @@ use std::num::NonZeroUsize;
 pub enum TargetKind {
     Item,
     Feature,
+    Npc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,14 @@ impl TargetQuery {
         }
     }
 
+    pub fn npc(name: String) -> Self {
+        Self {
+            kind: Some(TargetKind::Npc),
+            ordinal: None,
+            name,
+        }
+    }
+
     pub fn with_ordinal(mut self, ordinal: NonZeroUsize) -> Self {
         self.ordinal = Some(ordinal);
         self
@@ -54,9 +63,12 @@ impl From<String> for TargetQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Look,
+    Exits,
+    Help,
     Move(Direction),
     Take(TargetQuery),
     Inventory,
     Drop(TargetQuery),
     Examine(TargetQuery),
+    Talk(TargetQuery),
 }

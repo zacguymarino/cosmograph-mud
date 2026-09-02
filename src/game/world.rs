@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use super::feature::RoomFeature;
-use super::ids::{FeatureId, ItemId, RoomId, WorldId};
+use super::ids::{FeatureId, ItemId, NpcId, RoomId, WorldId};
 use super::item::Item;
+use super::npc::Npc;
 use super::room::Room;
 
 #[derive(Debug)]
@@ -12,6 +13,7 @@ pub struct World {
     pub starting_room: RoomId,
     pub items: HashMap<ItemId, Item>,
     pub features: HashMap<FeatureId, RoomFeature>,
+    pub npcs: HashMap<NpcId, Npc>,
     pub rooms: HashMap<RoomId, Room>,
 }
 
@@ -31,6 +33,10 @@ impl World {
     pub fn feature(&self, id: &FeatureId) -> Option<&RoomFeature> {
         self.features.get(id)
     }
+
+    pub fn npc(&self, id: &NpcId) -> Option<&Npc> {
+        self.npcs.get(id)
+    }
 }
 
 #[cfg(test)]
@@ -45,6 +51,7 @@ mod tests {
             description: "A test room.".to_string(),
             items: vec![],
             features: vec![],
+            npcs: vec![],
             exits: HashMap::new(),
         }
     }
@@ -72,12 +79,23 @@ mod tests {
         let mut features = HashMap::new();
         features.insert(feature.id.clone(), feature);
 
+        let npc = Npc {
+            id: NpcId("test_npc".to_string()),
+            name: "Test NPC".to_string(),
+            room_description: "A test NPC stands here.".to_string(),
+            description: "An NPC used for testing.".to_string(),
+            greeting: "Hello from the test NPC.".to_string(),
+        };
+        let mut npcs = HashMap::new();
+        npcs.insert(npc.id.clone(), npc);
+
         World {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
             items,
             features,
+            npcs,
             rooms,
         }
     }
@@ -151,5 +169,22 @@ mod tests {
         let world = valid_world();
 
         assert!(world.feature(&FeatureId("missing".to_string())).is_none());
+    }
+
+    #[test]
+    fn existing_npc_returns_borrowed_npc() {
+        let world = valid_world();
+
+        let npc = world
+            .npc(&NpcId("test_npc".to_string()))
+            .expect("NPC should exist");
+
+        assert_eq!(npc.name, "Test NPC");
+    }
+
+    #[test]
+    fn missing_npc_returns_none() {
+        let world = valid_world();
+        assert!(world.npc(&NpcId("missing".to_string())).is_none());
     }
 }

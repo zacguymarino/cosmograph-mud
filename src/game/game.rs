@@ -2,10 +2,10 @@ use super::character::Character;
 use super::command::{Command, TargetKind, TargetQuery};
 use super::direction::Direction;
 use super::event::{
-    DropFailureReason, ExamineFailureReason, ExaminedFeature, ExaminedItem, GameEvent,
-    ObservedFeature, ObservedItem, TakeFailureReason,
+    DropFailureReason, ExamineFailureReason, ExaminedFeature, ExaminedItem, ExaminedNpc, GameEvent,
+    ObservedFeature, ObservedItem, ObservedNpc, TakeFailureReason, TalkFailureReason,
 };
-use super::ids::{FeatureId, ItemId};
+use super::ids::{FeatureId, ItemId, NpcId};
 use super::naming::normalize_name;
 use super::world::World;
 
@@ -19,6 +19,7 @@ pub struct Game {
 enum ExamineTarget {
     Item(ItemId),
     Feature(FeatureId),
+    Npc(NpcId),
 }
 
 impl Game {
@@ -56,12 +57,35 @@ impl Game {
             })
             .collect::<Option<Vec<_>>>()?;
 
+        let npcs = room
+            .npcs
+            .iter()
+            .map(|npc_id| {
+                let npc = self.world.npc(npc_id)?;
+                Some(ObservedNpc {
+                    id: npc.id.clone(),
+                    name: npc.name.clone(),
+                    room_description: npc.room_description.clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+
         Some(GameEvent::RoomObserved {
             room_id: room.id.clone(),
             name: room.name.clone(),
             description: room.description.clone(),
             items,
             features,
+            npcs,
+            exits: room.exits.keys().cloned().collect(),
+        })
+    }
+
+    fn observe_current_exits(&self) -> Option<GameEvent> {
+        let room = self.world.room(&self.character.current_room)?;
+
+        Some(GameEvent::ExitsObserved {
+            room_id: room.id.clone(),
             exits: room.exits.keys().cloned().collect(),
         })
     }
@@ -87,12 +111,20 @@ impl Game {
 
         self.character.current_room = destination.clone();
 
-        vec![GameEvent::CharacterMoved {
+        let movement_event = GameEvent::CharacterMoved {
             character_id: self.character.id.clone(),
             from: current_room,
             to: destination,
             direction,
-        }]
+        };
+
+        let mut events = vec![movement_event];
+
+        if let Some(room_observed) = self.observe_current_room() {
+            events.push(room_observed);
+        }
+
+        events
     }
 
     fn matching_room_items(&self, query: &str) -> Vec<ItemId> {
@@ -353,10 +385,83 @@ impl Game {
         matches
     }
 
+    fn matching_room_npcs(&self, query: &str) -> Vec<NpcId> {
+        let Some(room) = self.world.room(&self.character.current_room) else {
+            return vec![];
+        };
+        let normalized_query = normalize_name(query);
+        room.npcs
+            .iter()
+            .filter(|npc_id| {
+                self.world
+                    .npc(npc_id)
+                    .is_some_and(|npc| normalize_name(&npc.name) == normalized_query)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn attempt_talk(&self, query: impl Into<TargetQuery>) -> Vec<GameEvent> {
+        let mut query = query.into();
+        query.name = normalize_name(&query.name);
+        let matches = self.matching_room_npcs(&query.name);
+        let query_name = query.name;
+
+        let npc_id = if let Some(ordinal) = query.ordinal {
+            let requested = ordinal.get();
+            let Some(npc_id) = matches.get(requested - 1) else {
+                return vec![GameEvent::TalkFailed {
+                    character_id: self.character.id.clone(),
+                    query: query_name,
+                    reason: TalkFailureReason::OrdinalOutOfRange {
+                        requested,
+                        available: matches.len(),
+                    },
+                }];
+            };
+            npc_id
+        } else {
+            match matches.as_slice() {
+                [] => {
+                    return vec![GameEvent::TalkFailed {
+                        character_id: self.character.id.clone(),
+                        query: query_name,
+                        reason: TalkFailureReason::NotFound,
+                    }];
+                }
+                [npc_id] => npc_id,
+                _ => {
+                    return vec![GameEvent::TalkFailed {
+                        character_id: self.character.id.clone(),
+                        query: query_name,
+                        reason: TalkFailureReason::Ambiguous {
+                            match_count: matches.len(),
+                        },
+                    }];
+                }
+            }
+        };
+
+        let Some(npc) = self.world.npc(npc_id) else {
+            return vec![GameEvent::TalkFailed {
+                character_id: self.character.id.clone(),
+                query: query_name,
+                reason: TalkFailureReason::NotFound,
+            }];
+        };
+
+        vec![GameEvent::NpcSpoke {
+            character_id: self.character.id.clone(),
+            npc_id: npc.id.clone(),
+            name: npc.name.clone(),
+            greeting: npc.greeting.clone(),
+        }]
+    }
+
     fn matching_examine_targets(&self, query: &TargetQuery) -> Vec<ExamineTarget> {
         let mut matches = Vec::new();
 
-        if query.kind != Some(TargetKind::Feature) {
+        if !matches!(query.kind, Some(TargetKind::Feature | TargetKind::Npc)) {
             matches.extend(
                 self.matching_accessible_items(&query.name)
                     .into_iter()
@@ -364,11 +469,19 @@ impl Game {
             );
         }
 
-        if query.kind != Some(TargetKind::Item) {
+        if !matches!(query.kind, Some(TargetKind::Item | TargetKind::Npc)) {
             matches.extend(
                 self.matching_room_features(&query.name)
                     .into_iter()
                     .map(ExamineTarget::Feature),
+            );
+        }
+
+        if !matches!(query.kind, Some(TargetKind::Item | TargetKind::Feature)) {
+            matches.extend(
+                self.matching_room_npcs(&query.name)
+                    .into_iter()
+                    .map(ExamineTarget::Npc),
             );
         }
 
@@ -410,6 +523,7 @@ impl Game {
                         .map(|target| match target {
                             ExamineTarget::Item(_) => TargetKind::Item,
                             ExamineTarget::Feature(_) => TargetKind::Feature,
+                            ExamineTarget::Npc(_) => TargetKind::Npc,
                         })
                         .collect();
 
@@ -459,17 +573,37 @@ impl Game {
                     },
                 }]
             }
+            ExamineTarget::Npc(npc_id) => {
+                let Some(npc) = self.world.npc(npc_id) else {
+                    return vec![GameEvent::ExamineFailed {
+                        character_id: self.character.id.clone(),
+                        query: query_name,
+                        reason: ExamineFailureReason::NotFound,
+                    }];
+                };
+                vec![GameEvent::NpcExamined {
+                    character_id: self.character.id.clone(),
+                    npc: ExaminedNpc {
+                        id: npc.id.clone(),
+                        name: npc.name.clone(),
+                        description: npc.description.clone(),
+                    },
+                }]
+            }
         }
     }
 
     pub fn process(&mut self, command: Command) -> Vec<GameEvent> {
         match command {
             Command::Look => self.observe_current_room().into_iter().collect(),
+            Command::Exits => self.observe_current_exits().into_iter().collect(),
+            Command::Help => vec![GameEvent::HelpRequested],
             Command::Move(direction) => self.attempt_move(direction),
             Command::Take(query) => self.attempt_take(query),
             Command::Inventory => self.observe_inventory().into_iter().collect(),
             Command::Drop(query) => self.attempt_drop(query),
             Command::Examine(query) => self.attempt_examine(query),
+            Command::Talk(query) => self.attempt_talk(query),
         }
     }
 }
@@ -478,8 +612,9 @@ impl Game {
 mod tests {
     use super::*;
     use crate::game::feature::RoomFeature;
-    use crate::game::ids::{CharacterId, FeatureId, ItemId, RoomId, WorldId};
+    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, RoomId, WorldId};
     use crate::game::item::Item;
+    use crate::game::npc::Npc;
     use crate::game::room::Room;
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
@@ -494,6 +629,7 @@ mod tests {
             description: "A test room.".to_string(),
             items: vec![ItemId("test_item".to_string())],
             features: vec![FeatureId("test_feature".to_string())],
+            npcs: vec![NpcId("test_npc".to_string())],
             exits: start_exits,
         };
 
@@ -503,6 +639,7 @@ mod tests {
             description: "Another test room.".to_string(),
             items: vec![],
             features: vec![],
+            npcs: vec![],
             exits: HashMap::new(),
         };
 
@@ -529,12 +666,23 @@ mod tests {
         let mut features = HashMap::new();
         features.insert(feature.id.clone(), feature);
 
+        let npc = Npc {
+            id: NpcId("test_npc".to_string()),
+            name: "Test NPC".to_string(),
+            room_description: "A test NPC stands here.".to_string(),
+            description: "An NPC used for testing.".to_string(),
+            greeting: "Hello from the test NPC.".to_string(),
+        };
+        let mut npcs = HashMap::new();
+        npcs.insert(npc.id.clone(), npc);
+
         let world = World {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
             items,
             features,
+            npcs,
             rooms,
         };
 
@@ -567,6 +715,11 @@ mod tests {
                     name: "Test Feature".to_string(),
                     room_description: "A test feature stands here.".to_string(),
                 }],
+                npcs: vec![ObservedNpc {
+                    id: NpcId("test_npc".to_string()),
+                    name: "Test NPC".to_string(),
+                    room_description: "A test NPC stands here.".to_string(),
+                }],
                 exits: vec![Direction::North],
             })
         )
@@ -585,15 +738,18 @@ mod tests {
 
         let events = game.attempt_move(Direction::North);
 
-        assert_eq!(
-            events,
-            vec![GameEvent::CharacterMoved {
-                character_id: CharacterId("player".to_string()),
-                from: RoomId("start".to_string()),
-                to: RoomId("next_room".to_string()),
-                direction: Direction::North,
-            }]
-        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::CharacterMoved {
+                    to,
+                    direction: Direction::North,
+                    ..
+                },
+                GameEvent::RoomObserved { room_id, .. }
+            ] if to == &RoomId("next_room".to_string())
+                && room_id == &RoomId("next_room".to_string())
+        ));
 
         assert_eq!(game.character.current_room, RoomId("next_room".to_string()));
     }
@@ -629,6 +785,31 @@ mod tests {
     }
 
     #[test]
+    fn exits_command_observes_current_room_exits() {
+        let mut game = game_with_character_in("start");
+
+        assert_eq!(
+            game.process(Command::Exits),
+            vec![GameEvent::ExitsObserved {
+                room_id: RoomId("start".to_string()),
+                exits: vec![Direction::North],
+            }]
+        );
+    }
+
+    #[test]
+    fn exits_command_with_missing_room_produces_no_event() {
+        let mut game = game_with_character_in("missing");
+        assert!(game.process(Command::Exits).is_empty());
+    }
+
+    #[test]
+    fn help_command_requests_help() {
+        let mut game = game_with_character_in("start");
+        assert_eq!(game.process(Command::Help), vec![GameEvent::HelpRequested]);
+    }
+
+    #[test]
     fn move_command_attempts_movement() {
         let mut game = game_with_character_in("start");
 
@@ -636,7 +817,10 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [GameEvent::CharacterMoved { .. }]
+            [
+                GameEvent::CharacterMoved { .. },
+                GameEvent::RoomObserved { .. }
+            ]
         ));
 
         assert_eq!(game.character.current_room, RoomId("next_room".to_string()));
@@ -1215,6 +1399,172 @@ mod tests {
             .as_slice(),
             [GameEvent::FeatureExamined { .. }]
         ));
+    }
+
+    #[test]
+    fn npc_can_be_examined_by_qualified_name() {
+        let game = game_with_character_in("start");
+
+        assert_eq!(
+            game.attempt_examine(TargetQuery::npc("test npc".to_string())),
+            vec![GameEvent::NpcExamined {
+                character_id: CharacterId("player".to_string()),
+                npc: ExaminedNpc {
+                    id: NpcId("test_npc".to_string()),
+                    name: "Test NPC".to_string(),
+                    description: "An NPC used for testing.".to_string(),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn npc_in_another_room_is_not_accessible() {
+        let game = game_with_character_in("next_room");
+
+        assert!(matches!(
+            game.attempt_examine(TargetQuery::npc("test npc".to_string()))
+                .as_slice(),
+            [GameEvent::ExamineFailed {
+                reason: ExamineFailureReason::NotFound,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn unqualified_examine_reports_npc_ambiguity_in_candidate_order() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .npcs
+            .get_mut(&NpcId("test_npc".to_string()))
+            .expect("test NPC should exist")
+            .name = "Test Item".to_string();
+
+        assert_eq!(
+            game.attempt_examine(TargetQuery::any("test item".to_string())),
+            vec![GameEvent::ExamineFailed {
+                character_id: CharacterId("player".to_string()),
+                query: "test item".to_string(),
+                reason: ExamineFailureReason::Ambiguous {
+                    kinds: vec![TargetKind::Item, TargetKind::Npc],
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn talking_to_nearby_npc_returns_authored_greeting() {
+        let game = game_with_character_in("start");
+
+        assert_eq!(
+            game.attempt_talk(TargetQuery::npc("test npc".to_string())),
+            vec![GameEvent::NpcSpoke {
+                character_id: CharacterId("player".to_string()),
+                npc_id: NpcId("test_npc".to_string()),
+                name: "Test NPC".to_string(),
+                greeting: "Hello from the test NPC.".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn talking_to_npc_in_another_room_fails() {
+        let game = game_with_character_in("next_room");
+
+        assert_eq!(
+            game.attempt_talk(TargetQuery::npc("test npc".to_string())),
+            vec![GameEvent::TalkFailed {
+                character_id: CharacterId("player".to_string()),
+                query: "test npc".to_string(),
+                reason: TalkFailureReason::NotFound,
+            }]
+        );
+    }
+
+    #[test]
+    fn talking_to_duplicate_npc_name_is_ambiguous() {
+        let mut game = game_with_character_in("start");
+        let second_npc = Npc {
+            id: NpcId("second_npc".to_string()),
+            name: "Test NPC".to_string(),
+            room_description: "Another test NPC stands here.".to_string(),
+            description: "Another NPC used for testing.".to_string(),
+            greeting: "Hello from the second NPC.".to_string(),
+        };
+        game.world.npcs.insert(second_npc.id.clone(), second_npc);
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .expect("starting room should exist")
+            .npcs
+            .push(NpcId("second_npc".to_string()));
+
+        assert_eq!(
+            game.attempt_talk(TargetQuery::npc("test npc".to_string())),
+            vec![GameEvent::TalkFailed {
+                character_id: CharacterId("player".to_string()),
+                query: "test npc".to_string(),
+                reason: TalkFailureReason::Ambiguous { match_count: 2 },
+            }]
+        );
+    }
+
+    #[test]
+    fn numbered_talk_selects_requested_npc() {
+        let mut game = game_with_character_in("start");
+        let second_npc = Npc {
+            id: NpcId("second_npc".to_string()),
+            name: "Test NPC".to_string(),
+            room_description: "Another test NPC stands here.".to_string(),
+            description: "Another NPC used for testing.".to_string(),
+            greeting: "Hello from the second NPC.".to_string(),
+        };
+        game.world.npcs.insert(second_npc.id.clone(), second_npc);
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .expect("starting room should exist")
+            .npcs
+            .push(NpcId("second_npc".to_string()));
+
+        assert!(matches!(
+            game.attempt_talk(
+                TargetQuery::npc("test npc".to_string())
+                    .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero"))
+            )
+            .as_slice(),
+            [GameEvent::NpcSpoke { npc_id, .. }]
+                if npc_id == &NpcId("second_npc".to_string())
+        ));
+    }
+
+    #[test]
+    fn talk_command_attempts_conversation() {
+        let mut game = game_with_character_in("start");
+        assert!(matches!(
+            game.process(Command::Talk(TargetQuery::npc("test npc".to_string())))
+                .as_slice(),
+            [GameEvent::NpcSpoke { .. }]
+        ));
+    }
+
+    #[test]
+    fn out_of_range_talk_reports_available_npcs() {
+        let game = game_with_character_in("start");
+
+        assert_eq!(
+            game.attempt_talk(
+                TargetQuery::npc("test npc".to_string())
+                    .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero"))
+            ),
+            vec![GameEvent::TalkFailed {
+                character_id: CharacterId("player".to_string()),
+                query: "test npc".to_string(),
+                reason: TalkFailureReason::OrdinalOutOfRange {
+                    requested: 2,
+                    available: 1,
+                },
+            }]
+        );
     }
 
     #[test]

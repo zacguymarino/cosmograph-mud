@@ -24,6 +24,13 @@ name = "Rusty-Key"
 room_description = "A relief carved into the podium depicts an oversized rusty key."
 description = "The stone relief portrays a rusty key surrounded by an unfamiliar constellation."
 
+[[npcs]]
+id = "mara_voss"
+name = "Mara Voss"
+room_description = "Mara Voss tends the tavern from behind the old wooden bar."
+description = "A sharp-eyed innkeeper in a weathered coat, Mara watches the room with practiced calm."
+greeting = "Welcome to the Rusty Tavern. If you're newly arrived, the plaza is west of here."
+
 [[rooms]]
 id = "origin_plaza"
 name = "Origin Plaza"
@@ -48,6 +55,7 @@ south = "origin_plaza"
 id = "rusty_tavern"
 name = "Rusty Tavern"
 description = "A worn but welcoming tavern. A fire crackles beside an old wooden bar."
+npcs = ["mara_voss"]
 
 [rooms.exits]
 west = "origin_plaza"

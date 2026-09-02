@@ -11,6 +11,8 @@ pub struct WorldDefinition {
     pub items: Vec<ItemDefinition>,
     #[serde(default)]
     pub features: Vec<FeatureDefinition>,
+    #[serde(default)]
+    pub npcs: Vec<NpcDefinition>,
 
     pub rooms: Vec<RoomDefinition>,
 }
@@ -25,6 +27,8 @@ pub struct RoomDefinition {
     pub items: Vec<String>,
     #[serde(default)]
     pub features: Vec<String>,
+    #[serde(default)]
+    pub npcs: Vec<String>,
 
     pub exits: HashMap<String, String>,
 }
@@ -42,4 +46,13 @@ pub struct FeatureDefinition {
     pub name: String,
     pub room_description: String,
     pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NpcDefinition {
+    pub id: String,
+    pub name: String,
+    pub room_description: String,
+    pub description: String,
+    pub greeting: String,
 }

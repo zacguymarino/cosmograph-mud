@@ -12,3 +12,6 @@ pub struct ItemId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FeatureId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NpcId(pub String);

@@ -1,6 +1,8 @@
 use crate::game::command::TargetKind;
 use crate::game::direction::Direction;
-use crate::game::event::{DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason};
+use crate::game::event::{
+    DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason, TalkFailureReason,
+};
 
 fn direction_name(direction: &Direction) -> &'static str {
     match direction {
@@ -18,6 +20,7 @@ pub fn render_event(event: &GameEvent) -> String {
             description,
             items,
             features,
+            npcs,
             exits,
             ..
         } => {
@@ -51,10 +54,48 @@ pub fn render_event(event: &GameEvent) -> String {
                 format!("\n{}", feature_descriptions.join("\n"))
             };
 
+            let npc_descriptions: Vec<&str> = npcs
+                .iter()
+                .map(|npc| npc.room_description.as_str())
+                .collect();
+            let npc_paragraph = if npc_descriptions.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", npc_descriptions.join("\n"))
+            };
+
             format!(
-                "{name}\n{description}{feature_paragraph}\nItems: {items_text}\nExits: {exits_text}"
+                "{name}\n{description}{feature_paragraph}{npc_paragraph}\nItems: {items_text}\nExits: {exits_text}"
             )
         }
+
+        GameEvent::ExitsObserved { exits, .. } => {
+            let mut exit_names: Vec<&str> = exits.iter().map(direction_name).collect();
+            exit_names.sort();
+
+            if exit_names.is_empty() {
+                "Exits: none".to_string()
+            } else {
+                format!("Exits: {}", exit_names.join(", "))
+            }
+        }
+
+        GameEvent::HelpRequested => [
+            "Commands:",
+            "  look (l)",
+            "  look [item|feature|npc] <target>",
+            "  examine (x) [item|feature|npc] <target>",
+            "  north (n), south (s), east (e), west (w)",
+            "  go <direction>",
+            "  exits",
+            "  take (get) <item>",
+            "  drop <item>",
+            "  inventory (inv, i)",
+            "  talk to <npc>",
+            "  help (commands)",
+            "  quit (exit)",
+        ]
+        .join("\n"),
 
         GameEvent::CharacterMoved { direction, .. } => {
             format!("You move {}.", direction_name(direction))
@@ -162,6 +203,44 @@ pub fn render_event(event: &GameEvent) -> String {
             format!("{}\n{}", feature.name, feature.description)
         }
 
+        GameEvent::NpcExamined { npc, .. } => {
+            format!("{}\n{}", npc.name, npc.description)
+        }
+
+        GameEvent::NpcSpoke { name, greeting, .. } => {
+            format!("{name} says, \"{greeting}\"")
+        }
+
+        GameEvent::TalkFailed {
+            query,
+            reason: TalkFailureReason::NotFound,
+            ..
+        } => format!("You do not see '{query}' here to talk to."),
+
+        GameEvent::TalkFailed {
+            query,
+            reason: TalkFailureReason::Ambiguous { match_count },
+            ..
+        } => {
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {query} (npc)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one NPC matches '{query}':\n{choices}\nTry 'talk to 1 {query}' or another listed number."
+            )
+        }
+
+        GameEvent::TalkFailed {
+            query,
+            reason:
+                TalkFailureReason::OrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => format!("There is no #{requested} '{query}' here; {available} NPCs matched."),
+
         GameEvent::ExamineFailed {
             query,
             reason: ExamineFailureReason::NotFound,
@@ -182,13 +261,14 @@ pub fn render_event(event: &GameEvent) -> String {
                     let kind_name = match kind {
                         TargetKind::Item => "item",
                         TargetKind::Feature => "feature",
+                        TargetKind::Npc => "npc",
                     };
                     format!("{}. {query} ({kind_name})", index + 1)
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-                "More than one accessible target matches '{query}':\n{choices}\nTry 'examine 1 {query}', 'examine item {query}', or 'examine feature {query}'."
+                "More than one accessible target matches '{query}':\n{choices}\nTry 'examine 1 {query}', 'examine item {query}', 'examine feature {query}', or 'examine npc {query}'."
             )
         }
 
@@ -209,8 +289,10 @@ pub fn render_event(event: &GameEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::event::{ExaminedFeature, ExaminedItem, ObservedFeature, ObservedItem};
-    use crate::game::ids::{CharacterId, FeatureId, ItemId, RoomId};
+    use crate::game::event::{
+        ExaminedFeature, ExaminedItem, ExaminedNpc, ObservedFeature, ObservedItem, ObservedNpc,
+    };
+    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, RoomId};
 
     #[test]
     fn room_observation_renders_room_details() {
@@ -227,12 +309,17 @@ mod tests {
                 name: "Test Feature".to_string(),
                 room_description: "A test feature stands here.".to_string(),
             }],
+            npcs: vec![ObservedNpc {
+                id: NpcId("test_npc".to_string()),
+                name: "Test NPC".to_string(),
+                room_description: "A test NPC stands here.".to_string(),
+            }],
             exits: vec![Direction::West, Direction::North, Direction::East],
         };
 
         assert_eq!(
             render_event(&event),
-            "Starting Room\nA test room.\nA test feature stands here.\nItems: Test Item\nExits: east, north, west"
+            "Starting Room\nA test room.\nA test feature stands here.\nA test NPC stands here.\nItems: Test Item\nExits: east, north, west"
         );
     }
 
@@ -244,6 +331,7 @@ mod tests {
             description: "A test room.".to_string(),
             items: vec![],
             features: vec![],
+            npcs: vec![],
             exits: vec![],
         };
 
@@ -263,6 +351,37 @@ mod tests {
         };
 
         assert_eq!(render_event(&event), "You move north.");
+    }
+
+    #[test]
+    fn exits_are_rendered_in_sorted_order() {
+        let event = GameEvent::ExitsObserved {
+            room_id: RoomId("start".to_string()),
+            exits: vec![Direction::West, Direction::North, Direction::East],
+        };
+
+        assert_eq!(render_event(&event), "Exits: east, north, west");
+    }
+
+    #[test]
+    fn room_without_exits_renders_none() {
+        let event = GameEvent::ExitsObserved {
+            room_id: RoomId("start".to_string()),
+            exits: vec![],
+        };
+
+        assert_eq!(render_event(&event), "Exits: none");
+    }
+
+    #[test]
+    fn help_lists_core_commands() {
+        let rendered = render_event(&GameEvent::HelpRequested);
+
+        assert!(rendered.starts_with("Commands:\n"));
+        assert!(rendered.contains("go <direction>"));
+        assert!(rendered.contains("look [item|feature|npc] <target>"));
+        assert!(rendered.contains("help (commands)"));
+        assert!(rendered.contains("talk to <npc>"));
     }
 
     #[test]
@@ -405,6 +524,80 @@ mod tests {
     }
 
     #[test]
+    fn examined_npc_renders_description() {
+        let event = GameEvent::NpcExamined {
+            character_id: CharacterId("player".to_string()),
+            npc: ExaminedNpc {
+                id: NpcId("mara_voss".to_string()),
+                name: "Mara Voss".to_string(),
+                description: "A sharp-eyed innkeeper.".to_string(),
+            },
+        };
+
+        assert_eq!(render_event(&event), "Mara Voss\nA sharp-eyed innkeeper.");
+    }
+
+    #[test]
+    fn npc_greeting_renders_as_speech() {
+        let event = GameEvent::NpcSpoke {
+            character_id: CharacterId("player".to_string()),
+            npc_id: NpcId("mara_voss".to_string()),
+            name: "Mara Voss".to_string(),
+            greeting: "Welcome to the Rusty Tavern.".to_string(),
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Mara Voss says, \"Welcome to the Rusty Tavern.\""
+        );
+    }
+
+    #[test]
+    fn missing_talk_target_renders_message() {
+        let event = GameEvent::TalkFailed {
+            character_id: CharacterId("player".to_string()),
+            query: "missing npc".to_string(),
+            reason: TalkFailureReason::NotFound,
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "You do not see 'missing npc' here to talk to."
+        );
+    }
+
+    #[test]
+    fn ambiguous_talk_target_renders_numbered_choices() {
+        let event = GameEvent::TalkFailed {
+            character_id: CharacterId("player".to_string()),
+            query: "guard".to_string(),
+            reason: TalkFailureReason::Ambiguous { match_count: 2 },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "More than one NPC matches 'guard':\n1. guard (npc)\n2. guard (npc)\nTry 'talk to 1 guard' or another listed number."
+        );
+    }
+
+    #[test]
+    fn out_of_range_talk_target_renders_counts() {
+        let event = GameEvent::TalkFailed {
+            character_id: CharacterId("player".to_string()),
+            query: "guard".to_string(),
+            reason: TalkFailureReason::OrdinalOutOfRange {
+                requested: 3,
+                available: 2,
+            },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "There is no #3 'guard' here; 2 NPCs matched."
+        );
+    }
+
+    #[test]
     fn missing_examine_target_renders_message() {
         let event = GameEvent::ExamineFailed {
             character_id: CharacterId("player".to_string()),
@@ -430,7 +623,7 @@ mod tests {
 
         assert_eq!(
             render_event(&event),
-            "More than one accessible target matches 'key':\n1. key (item)\n2. key (feature)\nTry 'examine 1 key', 'examine item key', or 'examine feature key'."
+            "More than one accessible target matches 'key':\n1. key (item)\n2. key (feature)\nTry 'examine 1 key', 'examine item key', 'examine feature key', or 'examine npc key'."
         );
     }
 }

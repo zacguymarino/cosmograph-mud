@@ -7,5 +7,6 @@ pub mod game;
 pub mod ids;
 pub mod item;
 pub mod naming;
+pub mod npc;
 pub mod room;
 pub mod world;

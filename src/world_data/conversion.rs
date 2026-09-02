@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use super::definition::{FeatureDefinition, ItemDefinition, RoomDefinition};
+use super::definition::{FeatureDefinition, ItemDefinition, NpcDefinition, RoomDefinition};
 use crate::game::direction::Direction;
 use crate::game::feature::RoomFeature;
-use crate::game::ids::{FeatureId, ItemId, RoomId, WorldId};
+use crate::game::ids::{FeatureId, ItemId, NpcId, RoomId, WorldId};
 use crate::game::item::Item;
+use crate::game::npc::Npc;
 use crate::game::room::Room;
 use crate::game::world::World;
 use crate::world_data::definition::WorldDefinition;
@@ -19,12 +20,14 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
     }
     let items = definition.items.into_iter().map(ItemId).collect();
     let features = definition.features.into_iter().map(FeatureId).collect();
+    let npcs = definition.npcs.into_iter().map(NpcId).collect();
     Ok(Room {
         id: RoomId(definition.id),
         name: definition.name,
         description: definition.description,
         items,
         features,
+        npcs,
         exits,
     })
 }
@@ -48,14 +51,31 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         features.insert(feature.id.clone(), feature);
     }
 
+    let mut npcs = HashMap::new();
+    for npc_definition in definition.npcs {
+        let npc = convert_npc(npc_definition);
+        npcs.insert(npc.id.clone(), npc);
+    }
+
     Ok(World {
         id: WorldId(definition.id),
         name: definition.name,
         starting_room: RoomId(definition.starting_room),
         items,
         features,
+        npcs,
         rooms,
     })
+}
+
+pub fn convert_npc(definition: NpcDefinition) -> Npc {
+    Npc {
+        id: NpcId(definition.id),
+        name: definition.name,
+        room_description: definition.room_description,
+        description: definition.description,
+        greeting: definition.greeting,
+    }
 }
 
 pub fn convert_item(definition: ItemDefinition) -> Item {
@@ -91,6 +111,7 @@ mod tests {
             description: "A test room.".to_string(),
             items: vec!["test_item".to_string()],
             features: vec!["test_feature".to_string()],
+            npcs: vec!["test_npc".to_string()],
             exits,
         }
     }
@@ -111,6 +132,13 @@ mod tests {
                 room_description: "A test feature stands here.".to_string(),
                 description: "A feature used for testing.".to_string(),
             }],
+            npcs: vec![NpcDefinition {
+                id: "test_npc".to_string(),
+                name: "Test NPC".to_string(),
+                room_description: "A test NPC stands here.".to_string(),
+                description: "An NPC used for testing.".to_string(),
+                greeting: "Hello from the test NPC.".to_string(),
+            }],
             rooms: vec![
                 valid_room_definition(),
                 RoomDefinition {
@@ -119,6 +147,7 @@ mod tests {
                     description: "Another test room.".to_string(),
                     items: vec![],
                     features: vec![],
+                    npcs: vec![],
                     exits: HashMap::new(),
                 },
             ],
@@ -139,6 +168,10 @@ mod tests {
             .features
             .get(&FeatureId("test_feature".to_string()))
             .expect("converted feature should exist");
+        let npc = world
+            .npcs
+            .get(&NpcId("test_npc".to_string()))
+            .expect("converted NPC should exist");
 
         assert_eq!(world.id, WorldId("test_world".to_string()));
         assert_eq!(world.name, "Test World");
@@ -146,8 +179,10 @@ mod tests {
         assert_eq!(world.rooms.len(), 2);
         assert_eq!(world.items.len(), 1);
         assert_eq!(world.features.len(), 1);
+        assert_eq!(world.npcs.len(), 1);
         assert_eq!(item.name, "Test Item");
         assert_eq!(feature.name, "Test Feature");
+        assert_eq!(npc.name, "Test NPC");
         assert!(world.rooms.contains_key(&RoomId("start".to_string())));
         assert!(world.rooms.contains_key(&RoomId("next_room".to_string())));
     }
@@ -179,6 +214,7 @@ mod tests {
             Some(&RoomId("next_room".to_string()))
         );
         assert_eq!(room.features, vec![FeatureId("test_feature".to_string())]);
+        assert_eq!(room.npcs, vec![NpcId("test_npc".to_string())]);
     }
 
     #[test]
@@ -224,5 +260,22 @@ mod tests {
         assert_eq!(feature.name, "Test Feature");
         assert_eq!(feature.room_description, "A test feature stands here.");
         assert_eq!(feature.description, "A feature used for testing.");
+    }
+
+    #[test]
+    fn npc_definition_converts() {
+        let npc = convert_npc(NpcDefinition {
+            id: "test_npc".to_string(),
+            name: "Test NPC".to_string(),
+            room_description: "A test NPC stands here.".to_string(),
+            description: "An NPC used for testing.".to_string(),
+            greeting: "Hello from the test NPC.".to_string(),
+        });
+
+        assert_eq!(npc.id, NpcId("test_npc".to_string()));
+        assert_eq!(npc.name, "Test NPC");
+        assert_eq!(npc.room_description, "A test NPC stands here.");
+        assert_eq!(npc.description, "An NPC used for testing.");
+        assert_eq!(npc.greeting, "Hello from the test NPC.");
     }
 }

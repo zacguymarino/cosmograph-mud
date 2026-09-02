@@ -22,6 +22,10 @@ fn parse_target_query(
                 words.remove(0);
                 Some(TargetKind::Feature)
             }
+            Some("npc") => {
+                words.remove(0);
+                Some(TargetKind::Npc)
+            }
             _ => kind,
         };
     }
@@ -43,6 +47,7 @@ fn parse_target_query(
     let mut target = match kind {
         Some(TargetKind::Item) => TargetQuery::item(name),
         Some(TargetKind::Feature) => TargetQuery::feature(name),
+        Some(TargetKind::Npc) => TargetQuery::npc(name),
         None => TargetQuery::any(name),
     };
 
@@ -57,6 +62,16 @@ fn parse_examine_query(query: &str) -> Result<Command, String> {
     parse_target_query(query, None, true, "examine what?").map(Command::Examine)
 }
 
+fn parse_direction(value: &str) -> Option<Direction> {
+    match value {
+        "north" | "n" => Some(Direction::North),
+        "south" | "s" => Some(Direction::South),
+        "east" | "e" => Some(Direction::East),
+        "west" | "w" => Some(Direction::West),
+        _ => None,
+    }
+}
+
 pub fn parse_command(input: &str) -> Result<Command, String> {
     let normalized = normalize_name(input);
 
@@ -66,6 +81,18 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
         "south" | "s" => Ok(Command::Move(Direction::South)),
         "east" | "e" => Ok(Command::Move(Direction::East)),
         "west" | "w" => Ok(Command::Move(Direction::West)),
+        "go" => Err("go where?".to_string()),
+        command if command.starts_with("go ") => {
+            let direction = command
+                .strip_prefix("go ")
+                .expect("go prefix was already checked");
+
+            parse_direction(direction)
+                .map(Command::Move)
+                .ok_or_else(|| format!("unknown direction '{direction}'"))
+        }
+        "exits" => Ok(Command::Exits),
+        "help" | "commands" => Ok(Command::Help),
         "take" => Err("take what?".to_string()),
         command if command.starts_with("take ") => {
             let query = command
@@ -76,6 +103,16 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
             parse_target_query(&query, Some(TargetKind::Item), false, "take what?")
                 .map(Command::Take)
         }
+        command if command.starts_with("get ") => {
+            let query = command
+                .strip_prefix("get ")
+                .expect("get prefix was already checked")
+                .to_string();
+
+            parse_target_query(&query, Some(TargetKind::Item), false, "get what?")
+                .map(Command::Take)
+        }
+        "get" => Err("get what?".to_string()),
         "inventory" | "inv" | "i" => Ok(Command::Inventory),
         "drop" => Err("drop what?".to_string()),
         command if command.starts_with("drop ") => {
@@ -86,6 +123,25 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
 
             parse_target_query(&query, Some(TargetKind::Item), false, "drop what?")
                 .map(Command::Drop)
+        }
+        "talk" | "talk to" => Err("talk to whom?".to_string()),
+        command if command.starts_with("talk to ") => {
+            let query = command
+                .strip_prefix("talk to ")
+                .expect("talk-to prefix was already checked")
+                .to_string();
+
+            parse_target_query(&query, Some(TargetKind::Npc), false, "talk to whom?")
+                .map(Command::Talk)
+        }
+        command if command.starts_with("talk ") => {
+            let query = command
+                .strip_prefix("talk ")
+                .expect("talk prefix was already checked")
+                .to_string();
+
+            parse_target_query(&query, Some(TargetKind::Npc), false, "talk to whom?")
+                .map(Command::Talk)
         }
         "examine" | "x" | "look at" => Err("examine what?".to_string()),
         command if command.starts_with("examine ") => {
@@ -112,6 +168,14 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
 
             parse_examine_query(&query)
         }
+        command if command.starts_with("look ") => {
+            let query = command
+                .strip_prefix("look ")
+                .expect("look prefix was already checked")
+                .to_string();
+
+            parse_examine_query(&query)
+        }
         _ => Err(format!("unknown command '{}'", input.trim())),
     }
 }
@@ -128,6 +192,43 @@ mod tests {
     #[test]
     fn direction_input_returns_move_command() {
         assert_eq!(parse_command(" N "), Ok(Command::Move(Direction::North)));
+    }
+
+    #[test]
+    fn go_with_full_direction_returns_move_command() {
+        assert_eq!(
+            parse_command("go north"),
+            Ok(Command::Move(Direction::North))
+        );
+    }
+
+    #[test]
+    fn go_with_direction_alias_returns_move_command() {
+        assert_eq!(parse_command("go w"), Ok(Command::Move(Direction::West)));
+    }
+
+    #[test]
+    fn go_without_direction_returns_error() {
+        assert_eq!(parse_command("go"), Err("go where?".to_string()));
+    }
+
+    #[test]
+    fn go_with_unknown_direction_returns_error() {
+        assert_eq!(
+            parse_command("go sideways"),
+            Err("unknown direction 'sideways'".to_string())
+        );
+    }
+
+    #[test]
+    fn exits_input_returns_exits_command() {
+        assert_eq!(parse_command("exits"), Ok(Command::Exits));
+    }
+
+    #[test]
+    fn help_inputs_return_help_command() {
+        assert_eq!(parse_command("help"), Ok(Command::Help));
+        assert_eq!(parse_command("commands"), Ok(Command::Help));
     }
 
     #[test]
@@ -152,6 +253,19 @@ mod tests {
     }
 
     #[test]
+    fn get_alias_returns_take_command_with_normalized_target() {
+        assert_eq!(
+            parse_command("  GET   Rusty   Key "),
+            Ok(Command::Take(TargetQuery::item("rusty key".to_string())))
+        );
+    }
+
+    #[test]
+    fn get_without_target_returns_error() {
+        assert_eq!(parse_command("get"), Err("get what?".to_string()));
+    }
+
+    #[test]
     fn inventory_alias_returns_inventory_command() {
         assert_eq!(parse_command(" INV "), Ok(Command::Inventory));
     }
@@ -167,6 +281,39 @@ mod tests {
     #[test]
     fn drop_without_target_returns_error() {
         assert_eq!(parse_command("drop"), Err("drop what?".to_string()));
+    }
+
+    #[test]
+    fn talk_to_input_returns_npc_query() {
+        assert_eq!(
+            parse_command("  TALK TO   Mara   Voss "),
+            Ok(Command::Talk(TargetQuery::npc("mara voss".to_string())))
+        );
+    }
+
+    #[test]
+    fn talk_without_to_returns_npc_query() {
+        assert_eq!(
+            parse_command("talk mara voss"),
+            Ok(Command::Talk(TargetQuery::npc("mara voss".to_string())))
+        );
+    }
+
+    #[test]
+    fn talk_without_target_returns_error() {
+        assert_eq!(parse_command("talk"), Err("talk to whom?".to_string()));
+        assert_eq!(parse_command("talk to"), Err("talk to whom?".to_string()));
+    }
+
+    #[test]
+    fn talk_to_ordinal_returns_numbered_npc_query() {
+        assert_eq!(
+            parse_command("talk to 2 guard"),
+            Ok(Command::Talk(
+                TargetQuery::npc("guard".to_string())
+                    .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero"))
+            ))
+        );
     }
 
     #[test]
@@ -194,6 +341,22 @@ mod tests {
     }
 
     #[test]
+    fn look_with_target_returns_examine_command() {
+        assert_eq!(
+            parse_command("look rusty key"),
+            Ok(Command::Examine(TargetQuery::any("rusty key".to_string())))
+        );
+    }
+
+    #[test]
+    fn look_with_qualified_target_returns_typed_examine_command() {
+        assert_eq!(
+            parse_command("look npc mara voss"),
+            Ok(Command::Examine(TargetQuery::npc("mara voss".to_string())))
+        );
+    }
+
+    #[test]
     fn examine_without_target_returns_error() {
         assert_eq!(parse_command("examine"), Err("examine what?".to_string()));
     }
@@ -211,6 +374,14 @@ mod tests {
         assert_eq!(
             parse_command("look at feature plaque"),
             Ok(Command::Examine(TargetQuery::feature("plaque".to_string())))
+        );
+    }
+
+    #[test]
+    fn examine_npc_qualifier_returns_typed_query() {
+        assert_eq!(
+            parse_command("x npc mara voss"),
+            Ok(Command::Examine(TargetQuery::npc("mara voss".to_string())))
         );
     }
 

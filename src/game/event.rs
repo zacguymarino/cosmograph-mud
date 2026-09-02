@@ -1,6 +1,6 @@
 use super::command::TargetKind;
 use super::direction::Direction;
-use super::ids::{CharacterId, FeatureId, ItemId, RoomId};
+use super::ids::{CharacterId, FeatureId, ItemId, NpcId, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TakeFailureReason {
@@ -24,6 +24,13 @@ pub enum ExamineFailureReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TalkFailureReason {
+    NotFound,
+    Ambiguous { match_count: usize },
+    OrdinalOutOfRange { requested: usize, available: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedItem {
     pub id: ItemId,
     pub name: String,
@@ -32,6 +39,13 @@ pub struct ObservedItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedFeature {
     pub id: FeatureId,
+    pub name: String,
+    pub room_description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedNpc {
+    pub id: NpcId,
     pub name: String,
     pub room_description: String,
 }
@@ -51,6 +65,13 @@ pub struct ExaminedFeature {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExaminedNpc {
+    pub id: NpcId,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameEvent {
     RoomObserved {
         room_id: RoomId,
@@ -58,8 +79,16 @@ pub enum GameEvent {
         description: String,
         items: Vec<ObservedItem>,
         features: Vec<ObservedFeature>,
+        npcs: Vec<ObservedNpc>,
         exits: Vec<Direction>,
     },
+
+    ExitsObserved {
+        room_id: RoomId,
+        exits: Vec<Direction>,
+    },
+
+    HelpRequested,
 
     CharacterMoved {
         character_id: CharacterId,
@@ -112,6 +141,24 @@ pub enum GameEvent {
     FeatureExamined {
         character_id: CharacterId,
         feature: ExaminedFeature,
+    },
+
+    NpcExamined {
+        character_id: CharacterId,
+        npc: ExaminedNpc,
+    },
+
+    NpcSpoke {
+        character_id: CharacterId,
+        npc_id: NpcId,
+        name: String,
+        greeting: String,
+    },
+
+    TalkFailed {
+        character_id: CharacterId,
+        query: String,
+        reason: TalkFailureReason,
     },
 
     ExamineFailed {
