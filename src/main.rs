@@ -5,6 +5,7 @@ mod world_data;
 use game::character::Character;
 use game::game::Game;
 use game::ids::CharacterId;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use world_data::loader::load_world;
 fn main() {
@@ -18,6 +19,7 @@ fn main() {
         current_room: starting_room,
         inventory: vec![],
         facts: HashSet::new(),
+        quests: HashMap::new(),
     };
 
     let mut game = Game::new(world, character);

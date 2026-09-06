@@ -20,7 +20,7 @@ pub fn load_world(path: &str) -> Result<World, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ids::{FactId, NpcId};
+    use crate::game::ids::{FactId, NpcId, QuestId};
 
     #[test]
     fn origin_world_loads_declared_fact_and_conditional_topic() {
@@ -52,5 +52,14 @@ mod tests {
             vec![FactId("heard_about_old_observatory".to_string())]
         );
         assert_eq!(lights.excludes_facts, lights.grants_facts);
+
+        let quest = world
+            .quest(&QuestId("lights_in_the_old_observatory".to_string()))
+            .expect("observatory quest should exist");
+        assert_eq!(quest.name, "Lights in the Old Observatory");
+        assert_eq!(
+            topic.starts_quests,
+            vec![QuestId("lights_in_the_old_observatory".to_string())]
+        );
     }
 }

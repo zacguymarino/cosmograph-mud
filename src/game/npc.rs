@@ -1,4 +1,4 @@
-use super::ids::{FactId, NpcId, NpcTopicId};
+use super::ids::{FactId, NpcId, NpcTopicId, QuestId};
 
 #[derive(Debug, Clone)]
 pub struct NpcTopic {
@@ -8,6 +8,7 @@ pub struct NpcTopic {
     pub requires_facts: Vec<FactId>,
     pub excludes_facts: Vec<FactId>,
     pub grants_facts: Vec<FactId>,
+    pub starts_quests: Vec<QuestId>,
 }
 
 #[derive(Debug, Clone)]

@@ -134,6 +134,7 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
         }
         "get" => Err("get what?".to_string()),
         "inventory" | "inv" | "i" => Ok(Command::Inventory),
+        "quests" | "journal" => Ok(Command::Quests),
         "drop" => Err("drop what?".to_string()),
         command if command.starts_with("drop ") => {
             let query = command
@@ -295,6 +296,12 @@ mod tests {
     #[test]
     fn inventory_alias_returns_inventory_command() {
         assert_eq!(parse_command(" INV "), Ok(Command::Inventory));
+    }
+
+    #[test]
+    fn quest_inputs_return_quests_command() {
+        assert_eq!(parse_command("quests"), Ok(Command::Quests));
+        assert_eq!(parse_command("JOURNAL"), Ok(Command::Quests));
     }
 
     #[test]

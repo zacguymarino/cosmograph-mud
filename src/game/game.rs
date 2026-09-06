@@ -3,12 +3,13 @@ use super::command::{AskQuery, Command, TargetKind, TargetQuery};
 use super::direction::Direction;
 use super::event::{
     AskFailureReason, DropFailureReason, ExamineFailureReason, ExaminedFeature, ExaminedItem,
-    ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, TakeFailureReason,
-    TalkFailureReason,
+    ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, ObservedQuest,
+    TakeFailureReason, TalkFailureReason,
 };
-use super::ids::{FactKey, FeatureId, ItemId, NpcId};
+use super::ids::{FactKey, FeatureId, ItemId, NpcId, QuestKey};
 use super::naming::normalize_name;
 use super::npc::NpcTopic;
+use super::quest::{QuestProgress, QuestStatus};
 use super::world::World;
 
 #[derive(Debug)]
@@ -277,6 +278,34 @@ impl Game {
             .collect::<Option<Vec<_>>>()?;
 
         Some(GameEvent::InventoryObserved { items })
+    }
+
+    fn observe_quests(&self) -> GameEvent {
+        let mut active = Vec::new();
+        let mut completed = Vec::new();
+
+        for (key, progress) in &self.character.quests {
+            if key.world_id != self.world.id {
+                continue;
+            }
+            let Some(quest) = self.world.quest(&key.quest_id) else {
+                continue;
+            };
+            let observed = ObservedQuest {
+                key: key.clone(),
+                name: quest.name.clone(),
+                description: quest.description.clone(),
+            };
+            match progress.status {
+                QuestStatus::Active => active.push(observed),
+                QuestStatus::Completed => completed.push(observed),
+            }
+        }
+
+        active.sort_by(|left, right| left.name.cmp(&right.name));
+        completed.sort_by(|left, right| left.name.cmp(&right.name));
+
+        GameEvent::QuestsObserved { active, completed }
     }
 
     fn matching_inventory_items(&self, query: &str) -> Vec<ItemId> {
@@ -574,7 +603,7 @@ impl Game {
             .unwrap_or_default();
         let updated_topics = (previous_topics != current_topics).then_some(current_topics);
 
-        vec![GameEvent::NpcAnswered {
+        let mut events = vec![GameEvent::NpcAnswered {
             character_id: self.character.id.clone(),
             npc_id,
             npc_name,
@@ -583,7 +612,37 @@ impl Game {
             response: topic.response.clone(),
             learned_facts,
             updated_topics,
-        }]
+        }];
+
+        for quest_id in &topic.starts_quests {
+            let key = QuestKey {
+                world_id: self.world.id.clone(),
+                quest_id: quest_id.clone(),
+            };
+            if self.character.quests.contains_key(&key) {
+                continue;
+            }
+            let Some(quest) = self.world.quest(quest_id) else {
+                continue;
+            };
+
+            self.character.quests.insert(
+                key.clone(),
+                QuestProgress {
+                    status: QuestStatus::Active,
+                },
+            );
+            events.push(GameEvent::QuestStarted {
+                character_id: self.character.id.clone(),
+                quest: ObservedQuest {
+                    key,
+                    name: quest.name.clone(),
+                    description: quest.description.clone(),
+                },
+            });
+        }
+
+        events
     }
 
     fn matching_examine_targets(&self, query: &TargetQuery) -> Vec<ExamineTarget> {
@@ -729,6 +788,7 @@ impl Game {
             Command::Move(direction) => self.attempt_move(direction),
             Command::Take(query) => self.attempt_take(query),
             Command::Inventory => self.observe_inventory().into_iter().collect(),
+            Command::Quests => vec![self.observe_quests()],
             Command::Drop(query) => self.attempt_drop(query),
             Command::Examine(query) => self.attempt_examine(query),
             Command::Talk(query) => self.attempt_talk(query),
@@ -742,10 +802,12 @@ mod tests {
     use super::*;
     use crate::game::feature::RoomFeature;
     use crate::game::ids::{
-        CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId,
+        CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestKey,
+        RoomId, WorldId,
     };
     use crate::game::item::Item;
     use crate::game::npc::{Npc, NpcTopic};
+    use crate::game::quest::{Quest, QuestProgress, QuestStatus};
     use crate::game::room::Room;
     use std::collections::{HashMap, HashSet};
     use std::num::NonZeroUsize;
@@ -810,16 +872,26 @@ mod tests {
                 requires_facts: vec![],
                 excludes_facts: vec![],
                 grants_facts: vec![],
+                starts_quests: vec![],
             }],
         };
         let mut npcs = HashMap::new();
         npcs.insert(npc.id.clone(), npc);
+
+        let quest = Quest {
+            id: QuestId("test_quest".to_string()),
+            name: "Test Quest".to_string(),
+            description: "A quest used for testing.".to_string(),
+        };
+        let mut quests = HashMap::new();
+        quests.insert(quest.id.clone(), quest);
 
         let world = World {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
             facts: HashSet::new(),
+            quests,
             items,
             features,
             npcs,
@@ -832,6 +904,7 @@ mod tests {
             current_room: RoomId(current_room.to_string()),
             inventory: vec![],
             facts: HashSet::new(),
+            quests: HashMap::new(),
         };
 
         Game::new(world, character)
@@ -854,6 +927,7 @@ mod tests {
                 requires_facts,
                 excludes_facts,
                 grants_facts: vec![],
+                starts_quests: vec![],
             });
     }
 
@@ -874,6 +948,18 @@ mod tests {
             .find(|topic| topic.id == NpcTopicId(topic_id.to_string()))
             .expect("test topic should exist")
             .grants_facts = grants_facts;
+    }
+
+    fn set_topic_starts_quests(game: &mut Game, topic_id: &str, starts_quests: Vec<QuestId>) {
+        game.world
+            .npcs
+            .get_mut(&NpcId("test_npc".to_string()))
+            .expect("test NPC should exist")
+            .topics
+            .iter_mut()
+            .find(|topic| topic.id == NpcTopicId(topic_id.to_string()))
+            .expect("test topic should exist")
+            .starts_quests = starts_quests;
     }
 
     #[test]
@@ -2037,6 +2123,119 @@ mod tests {
     }
 
     #[test]
+    fn quests_command_reports_no_started_quests() {
+        let mut game = game_with_character_in("start");
+
+        assert_eq!(
+            game.process(Command::Quests),
+            vec![GameEvent::QuestsObserved {
+                active: vec![],
+                completed: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn quest_observation_separates_active_and_completed_progress() {
+        let mut game = game_with_character_in("start");
+        let key = QuestKey {
+            world_id: WorldId("test_world".to_string()),
+            quest_id: QuestId("test_quest".to_string()),
+        };
+        game.character.quests.insert(
+            key.clone(),
+            QuestProgress {
+                status: QuestStatus::Completed,
+            },
+        );
+
+        assert_eq!(
+            game.process(Command::Quests),
+            vec![GameEvent::QuestsObserved {
+                active: vec![],
+                completed: vec![ObservedQuest {
+                    key,
+                    name: "Test Quest".to_string(),
+                    description: "A quest used for testing.".to_string(),
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn dialogue_starts_world_qualified_quest() {
+        let mut game = game_with_character_in("start");
+        set_topic_starts_quests(
+            &mut game,
+            "test_topic",
+            vec![QuestId("test_quest".to_string())],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+        let key = QuestKey {
+            world_id: WorldId("test_world".to_string()),
+            quest_id: QuestId("test_quest".to_string()),
+        };
+
+        assert_eq!(
+            game.character.quests.get(&key),
+            Some(&QuestProgress {
+                status: QuestStatus::Active,
+            })
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::NpcAnswered { .. }, GameEvent::QuestStarted { quest, .. }]
+                if quest.key == key && quest.name == "Test Quest"
+        ));
+    }
+
+    #[test]
+    fn repeating_dialogue_does_not_restart_quest() {
+        let mut game = game_with_character_in("start");
+        set_topic_starts_quests(
+            &mut game,
+            "test_topic",
+            vec![QuestId("test_quest".to_string())],
+        );
+        let query = || AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        };
+
+        game.attempt_ask(query());
+        let repeated_events = game.attempt_ask(query());
+
+        assert_eq!(game.character.quests.len(), 1);
+        assert!(matches!(
+            repeated_events.as_slice(),
+            [GameEvent::NpcAnswered { .. }]
+        ));
+    }
+
+    #[test]
+    fn unavailable_dialogue_does_not_start_quest() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(&mut game, vec![FactId("required_fact".to_string())], vec![]);
+        set_topic_starts_quests(
+            &mut game,
+            "secret_topic",
+            vec![QuestId("test_quest".to_string())],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "secret topic".to_string(),
+        });
+
+        assert!(matches!(events.as_slice(), [GameEvent::AskFailed { .. }]));
+        assert!(game.character.quests.is_empty());
+    }
+
+    #[test]
     fn asking_about_unknown_topic_reports_selected_npc() {
         let mut game = game_with_character_in("start");
         assert!(matches!(
@@ -2127,6 +2326,7 @@ mod tests {
                 requires_facts: vec![],
                 excludes_facts: vec![],
                 grants_facts: vec![],
+                starts_quests: vec![],
             }],
         };
         game.world.npcs.insert(second.id.clone(), second);

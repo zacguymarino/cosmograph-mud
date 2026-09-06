@@ -74,6 +74,7 @@ pub enum Command {
     Move(Direction),
     Take(TargetQuery),
     Inventory,
+    Quests,
     Drop(TargetQuery),
     Examine(TargetQuery),
     Talk(TargetQuery),

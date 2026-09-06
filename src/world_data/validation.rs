@@ -305,6 +305,66 @@ fn validate_fact_ids(world: &WorldDefinition) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_quests(world: &WorldDefinition) -> Result<(), String> {
+    let mut seen = HashSet::new();
+
+    for quest in &world.quests {
+        if quest.id.trim().is_empty() {
+            return Err(format!("Quest '{}' has no id", quest.name));
+        }
+        if !is_valid_id(&quest.id) {
+            return Err(format!(
+                "Id for quest '{}' has invalid characters: {}",
+                quest.name, quest.id
+            ));
+        }
+        if !seen.insert(&quest.id) {
+            return Err(format!(
+                "The quest named {} has the duplicate id: {}",
+                quest.name, quest.id
+            ));
+        }
+        if quest.name.trim().is_empty() {
+            return Err(format!("Quest '{}' has no name", quest.id));
+        }
+        if quest.description.trim().is_empty() {
+            return Err(format!("Quest '{}' has no description", quest.id));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_topic_quest_references(world: &WorldDefinition) -> Result<(), String> {
+    let declared_quests = world
+        .quests
+        .iter()
+        .map(|quest| quest.id.as_str())
+        .collect::<HashSet<_>>();
+
+    for npc in &world.npcs {
+        for topic in &npc.topics {
+            let mut started = HashSet::new();
+            for quest_id in &topic.starts_quests {
+                if !declared_quests.contains(quest_id.as_str()) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' starts missing quest '{}'",
+                        topic.id, npc.id, quest_id
+                    ));
+                }
+                if !started.insert(quest_id) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' starts quest '{}' more than once",
+                        topic.id, npc.id, quest_id
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_topic_fact_references(world: &WorldDefinition) -> Result<(), String> {
     let declared_facts = world
         .facts
@@ -426,7 +486,9 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_unique_npc_ids(world)?;
     validate_npc_topics(world)?;
     validate_fact_ids(world)?;
+    validate_quests(world)?;
     validate_topic_fact_references(world)?;
+    validate_topic_quest_references(world)?;
     validate_room_npc_references(world)?;
     validate_unique_npc_placements(world)?;
     validate_room_item_references(world)?;
@@ -446,7 +508,7 @@ mod tests {
     use super::*;
     use crate::world_data::definition::{
         FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition,
-        RoomDefinition,
+        QuestDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -456,6 +518,7 @@ mod tests {
             name: "Test World".to_string(),
             starting_room: "start".to_string(),
             facts: vec![],
+            quests: vec![],
             items: vec![],
             features: vec![],
             npcs: vec![],
@@ -883,6 +946,7 @@ mod tests {
             requires_facts: vec![],
             excludes_facts: vec![],
             grants_facts: vec![],
+            starts_quests: vec![],
         }
     }
 
@@ -1126,6 +1190,112 @@ mod tests {
         world.npcs.push(npc);
 
         assert!(validate_world(&world).is_ok());
+    }
+
+    fn test_quest(id: &str, name: &str) -> QuestDefinition {
+        QuestDefinition {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: "A quest used for testing.".to_string(),
+        }
+    }
+
+    #[test]
+    fn valid_quest_passes_validation() {
+        let mut world = valid_world();
+        world.quests.push(test_quest("test_quest", "Test Quest"));
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn empty_quest_id_fails_validation() {
+        let mut world = valid_world();
+        world.quests.push(test_quest("  ", "Test Quest"));
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Quest 'Test Quest' has no id".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_quest_id_fails_validation() {
+        let mut world = valid_world();
+        world.quests.push(test_quest("bad!", "Test Quest"));
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Id for quest 'Test Quest' has invalid characters: bad!".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_quest_ids_fail_validation() {
+        let mut world = valid_world();
+        world.quests.push(test_quest("test_quest", "First Quest"));
+        world.quests.push(test_quest("test_quest", "Second Quest"));
+
+        assert_eq!(
+            validate_world(&world),
+            Err("The quest named Second Quest has the duplicate id: test_quest".to_string())
+        );
+    }
+
+    #[test]
+    fn quest_name_and_description_must_not_be_empty() {
+        let mut unnamed_world = valid_world();
+        unnamed_world.quests.push(test_quest("test_quest", "  "));
+        assert_eq!(
+            validate_world(&unnamed_world),
+            Err("Quest 'test_quest' has no name".to_string())
+        );
+
+        let mut undescribed_world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.description = "  ".to_string();
+        undescribed_world.quests.push(quest);
+        assert_eq!(
+            validate_world(&undescribed_world),
+            Err("Quest 'test_quest' has no description".to_string())
+        );
+    }
+
+    #[test]
+    fn topic_started_quest_must_be_declared() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("quest_offer", "Quest Offer");
+        topic.starts_quests.push("missing_quest".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'quest_offer' on NPC 'test_npc' starts missing quest 'missing_quest'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_started_quest_fails_validation() {
+        let mut world = valid_world();
+        world.quests.push(test_quest("test_quest", "Test Quest"));
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("quest_offer", "Quest Offer");
+        topic.starts_quests = vec!["test_quest".to_string(), "test_quest".to_string()];
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'quest_offer' on NPC 'test_npc' starts quest 'test_quest' more than once"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

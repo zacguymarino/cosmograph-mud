@@ -8,5 +8,6 @@ pub mod ids;
 pub mod item;
 pub mod naming;
 pub mod npc;
+pub mod quest;
 pub mod room;
 pub mod world;

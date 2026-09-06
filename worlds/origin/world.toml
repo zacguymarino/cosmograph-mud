@@ -5,6 +5,11 @@ starting_room = "origin_plaza"
 [[facts]]
 id = "heard_about_old_observatory"
 
+[[quests]]
+id = "lights_in_the_old_observatory"
+name = "Lights in the Old Observatory"
+description = "Investigate the strange lights reported near the abandoned observatory."
+
 [[items]]
 id = "rusty_key"
 name = "Rusty Key"
@@ -56,6 +61,7 @@ id = "old_observatory"
 name = "the old observatory"
 response = "Keep your voice down. The old observatory is supposed to be abandoned, but lights still move behind its broken dome."
 requires_facts = ["heard_about_old_observatory"]
+starts_quests = ["lights_in_the_old_observatory"]
 
 [[rooms]]
 id = "origin_plaza"

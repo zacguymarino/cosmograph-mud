@@ -92,6 +92,7 @@ pub fn render_event(event: &GameEvent) -> String {
             "  take (get) <item>",
             "  drop <item>",
             "  inventory (inv, i)",
+            "  quests (journal)",
             "  talk to <npc>",
             "  ask <npc> about <topic>",
             "  help (commands)",
@@ -157,6 +158,36 @@ pub fn render_event(event: &GameEvent) -> String {
             };
 
             format!("Inventory: {items_text}")
+        }
+
+        GameEvent::QuestsObserved { active, completed } => {
+            if active.is_empty() && completed.is_empty() {
+                return "Quests: none".to_string();
+            }
+
+            let mut sections = Vec::new();
+            if !active.is_empty() {
+                let quests = active
+                    .iter()
+                    .map(|quest| format!("- {}\n  {}", quest.name, quest.description))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!("Active quests:\n{quests}"));
+            }
+            if !completed.is_empty() {
+                let quests = completed
+                    .iter()
+                    .map(|quest| format!("- {}\n  {}", quest.name, quest.description))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                sections.push(format!("Completed quests:\n{quests}"));
+            }
+
+            sections.join("\n")
+        }
+
+        GameEvent::QuestStarted { quest, .. } => {
+            format!("Quest started: {}\n{}", quest.name, quest.description)
         }
 
         GameEvent::ItemDropped { item, .. } => {
@@ -365,8 +396,11 @@ mod tests {
     use super::*;
     use crate::game::event::{
         ExaminedFeature, ExaminedItem, ExaminedNpc, ObservedFeature, ObservedItem, ObservedNpc,
+        ObservedQuest,
     };
-    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
+    use crate::game::ids::{
+        CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestKey, RoomId, WorldId,
+    };
 
     #[test]
     fn room_observation_renders_room_details() {
@@ -521,6 +555,57 @@ mod tests {
         };
 
         assert_eq!(render_event(&event), "Inventory: Rusty Key");
+    }
+
+    #[test]
+    fn empty_quest_journal_renders_none() {
+        let event = GameEvent::QuestsObserved {
+            active: vec![],
+            completed: vec![],
+        };
+
+        assert_eq!(render_event(&event), "Quests: none");
+    }
+
+    #[test]
+    fn quest_journal_renders_active_and_completed_sections() {
+        let quest = |id: &str, name: &str| ObservedQuest {
+            key: QuestKey {
+                world_id: WorldId("origin".to_string()),
+                quest_id: QuestId(id.to_string()),
+            },
+            name: name.to_string(),
+            description: format!("The description for {name}."),
+        };
+        let event = GameEvent::QuestsObserved {
+            active: vec![quest("active", "Active Quest")],
+            completed: vec![quest("complete", "Completed Quest")],
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Active quests:\n- Active Quest\n  The description for Active Quest.\nCompleted quests:\n- Completed Quest\n  The description for Completed Quest."
+        );
+    }
+
+    #[test]
+    fn started_quest_renders_name_and_description() {
+        let event = GameEvent::QuestStarted {
+            character_id: CharacterId("player".to_string()),
+            quest: ObservedQuest {
+                key: QuestKey {
+                    world_id: WorldId("origin".to_string()),
+                    quest_id: QuestId("observatory".to_string()),
+                },
+                name: "Lights in the Old Observatory".to_string(),
+                description: "Investigate the strange lights.".to_string(),
+            },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Quest started: Lights in the Old Observatory\nInvestigate the strange lights."
+        );
     }
 
     #[test]

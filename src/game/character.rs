@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use super::ids::{CharacterId, FactKey, ItemId, RoomId};
+use super::ids::{CharacterId, FactKey, ItemId, QuestKey, RoomId};
+use super::quest::QuestProgress;
 
 #[derive(Debug)]
 pub struct Character {
@@ -9,4 +10,5 @@ pub struct Character {
     pub current_room: RoomId,
     pub inventory: Vec<ItemId>,
     pub facts: HashSet<FactKey>,
+    pub quests: HashMap<QuestKey, QuestProgress>,
 }

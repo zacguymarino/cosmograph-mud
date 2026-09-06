@@ -5,9 +5,10 @@ use super::definition::{
 };
 use crate::game::direction::Direction;
 use crate::game::feature::RoomFeature;
-use crate::game::ids::{FactId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId};
+use crate::game::ids::{FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, RoomId, WorldId};
 use crate::game::item::Item;
 use crate::game::npc::{Npc, NpcTopic};
+use crate::game::quest::Quest;
 use crate::game::room::Room;
 use crate::game::world::World;
 use crate::world_data::definition::WorldDefinition;
@@ -40,6 +41,19 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         .into_iter()
         .map(|fact| FactId(fact.id))
         .collect::<HashSet<_>>();
+
+    let quests = definition
+        .quests
+        .into_iter()
+        .map(|definition| {
+            let quest = Quest {
+                id: QuestId(definition.id),
+                name: definition.name,
+                description: definition.description,
+            };
+            (quest.id.clone(), quest)
+        })
+        .collect::<HashMap<_, _>>();
     let mut rooms = HashMap::new();
     for room_definition in definition.rooms {
         let room = convert_room(room_definition)?;
@@ -69,6 +83,7 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         name: definition.name,
         starting_room: RoomId(definition.starting_room),
         facts,
+        quests,
         items,
         features,
         npcs,
@@ -99,6 +114,7 @@ pub fn convert_npc_topic(definition: NpcTopicDefinition) -> NpcTopic {
         requires_facts: definition.requires_facts.into_iter().map(FactId).collect(),
         excludes_facts: definition.excludes_facts.into_iter().map(FactId).collect(),
         grants_facts: definition.grants_facts.into_iter().map(FactId).collect(),
+        starts_quests: definition.starts_quests.into_iter().map(QuestId).collect(),
     }
 }
 
@@ -123,7 +139,7 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FactDefinition, FeatureDefinition, ItemDefinition, RoomDefinition,
+        FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -150,6 +166,11 @@ mod tests {
             facts: vec![FactDefinition {
                 id: "knows_secret".to_string(),
             }],
+            quests: vec![QuestDefinition {
+                id: "test_quest".to_string(),
+                name: "Test Quest".to_string(),
+                description: "A quest used for testing.".to_string(),
+            }],
             items: vec![ItemDefinition {
                 id: "test_item".to_string(),
                 name: "Test Item".to_string(),
@@ -174,6 +195,7 @@ mod tests {
                     requires_facts: vec!["knows_secret".to_string()],
                     excludes_facts: vec![],
                     grants_facts: vec!["knows_secret".to_string()],
+                    starts_quests: vec!["test_quest".to_string()],
                 }],
             }],
             rooms: vec![
@@ -218,6 +240,12 @@ mod tests {
         assert_eq!(world.features.len(), 1);
         assert_eq!(world.npcs.len(), 1);
         assert!(world.declares_fact(&FactId("knows_secret".to_string())));
+        assert_eq!(
+            world
+                .quest(&QuestId("test_quest".to_string()))
+                .map(|quest| quest.name.as_str()),
+            Some("Test Quest")
+        );
         assert_eq!(item.name, "Test Item");
         assert_eq!(feature.name, "Test Feature");
         assert_eq!(npc.name, "Test NPC");
@@ -315,6 +343,7 @@ mod tests {
                 requires_facts: vec![],
                 excludes_facts: vec![],
                 grants_facts: vec![],
+                starts_quests: vec![],
             }],
         });
 
@@ -328,5 +357,6 @@ mod tests {
         assert!(npc.topics[0].requires_facts.is_empty());
         assert!(npc.topics[0].excludes_facts.is_empty());
         assert!(npc.topics[0].grants_facts.is_empty());
+        assert!(npc.topics[0].starts_quests.is_empty());
     }
 }

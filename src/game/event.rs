@@ -1,6 +1,6 @@
 use super::command::TargetKind;
 use super::direction::Direction;
-use super::ids::{CharacterId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
+use super::ids::{CharacterId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestKey, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TakeFailureReason {
@@ -80,6 +80,13 @@ pub struct ExaminedNpc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedQuest {
+    pub key: QuestKey,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameEvent {
     RoomObserved {
         room_id: RoomId,
@@ -126,6 +133,16 @@ pub enum GameEvent {
 
     InventoryObserved {
         items: Vec<ObservedItem>,
+    },
+
+    QuestsObserved {
+        active: Vec<ObservedQuest>,
+        completed: Vec<ObservedQuest>,
+    },
+
+    QuestStarted {
+        character_id: CharacterId,
+        quest: ObservedQuest,
     },
 
     ItemDropped {
