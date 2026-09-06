@@ -257,8 +257,23 @@ pub fn render_event(event: &GameEvent) -> String {
         } => format!("There is no #{requested} '{query}' here; {available} NPCs matched."),
 
         GameEvent::NpcAnswered {
-            npc_name, response, ..
-        } => format!("{npc_name} says, \"{response}\""),
+            npc_name,
+            response,
+            updated_topics,
+            ..
+        } => {
+            let answer = format!("{npc_name} says, \"{response}\"");
+            match updated_topics {
+                None => answer,
+                Some(topics) if topics.is_empty() => {
+                    format!("{answer}\nThere are no remaining discussion topics.")
+                }
+                Some(topics) => format!(
+                    "{answer}\nYou could now ask {npc_name} about: {}.",
+                    topics.join(", ")
+                ),
+            }
+        }
 
         GameEvent::AskFailed {
             npc_query,
@@ -637,8 +652,48 @@ mod tests {
             topic_id: NpcTopicId("origin_plaza".to_string()),
             topic_name: "Origin Plaza".to_string(),
             response: "It is west.".to_string(),
+            learned_facts: vec![],
+            updated_topics: None,
         };
         assert_eq!(render_event(&event), "Mara Voss says, \"It is west.\"");
+    }
+
+    #[test]
+    fn npc_answer_renders_topics_when_availability_changes() {
+        let event = GameEvent::NpcAnswered {
+            character_id: CharacterId("player".to_string()),
+            npc_id: NpcId("mara_voss".to_string()),
+            npc_name: "Mara Voss".to_string(),
+            topic_id: NpcTopicId("strange_lights".to_string()),
+            topic_name: "the strange lights".to_string(),
+            response: "Look toward the old dome.".to_string(),
+            learned_facts: vec![],
+            updated_topics: Some(vec!["the old observatory".to_string()]),
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Mara Voss says, \"Look toward the old dome.\"\nYou could now ask Mara Voss about: the old observatory."
+        );
+    }
+
+    #[test]
+    fn npc_answer_reports_when_no_discussion_topics_remain() {
+        let event = GameEvent::NpcAnswered {
+            character_id: CharacterId("player".to_string()),
+            npc_id: NpcId("mara_voss".to_string()),
+            npc_name: "Mara Voss".to_string(),
+            topic_id: NpcTopicId("final_topic".to_string()),
+            topic_name: "the final topic".to_string(),
+            response: "That is all I know.".to_string(),
+            learned_facts: vec![],
+            updated_topics: Some(vec![]),
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Mara Voss says, \"That is all I know.\"\nThere are no remaining discussion topics."
+        );
     }
 
     #[test]

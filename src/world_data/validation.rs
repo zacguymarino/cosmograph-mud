@@ -287,6 +287,92 @@ fn validate_unique_npc_placements(world: &WorldDefinition) -> Result<(), String>
     Ok(())
 }
 
+fn validate_fact_ids(world: &WorldDefinition) -> Result<(), String> {
+    let mut seen = HashSet::new();
+
+    for fact in &world.facts {
+        if fact.id.trim().is_empty() {
+            return Err("Fact has no id".to_string());
+        }
+        if !is_valid_id(&fact.id) {
+            return Err(format!("Fact id has invalid characters: {}", fact.id));
+        }
+        if !seen.insert(&fact.id) {
+            return Err(format!("World has duplicate fact id '{}'", fact.id));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_topic_fact_references(world: &WorldDefinition) -> Result<(), String> {
+    let declared_facts = world
+        .facts
+        .iter()
+        .map(|fact| fact.id.as_str())
+        .collect::<HashSet<_>>();
+
+    for npc in &world.npcs {
+        for topic in &npc.topics {
+            let mut required = HashSet::new();
+            for fact_id in &topic.requires_facts {
+                if !declared_facts.contains(fact_id.as_str()) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' requires missing fact '{}'",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+                if !required.insert(fact_id) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' requires fact '{}' more than once",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+            }
+
+            let mut excluded = HashSet::new();
+            for fact_id in &topic.excludes_facts {
+                if !declared_facts.contains(fact_id.as_str()) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' excludes missing fact '{}'",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+                if !excluded.insert(fact_id) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' excludes fact '{}' more than once",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+                if required.contains(fact_id) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' both requires and excludes fact '{}'",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+            }
+
+            let mut granted = HashSet::new();
+            for fact_id in &topic.grants_facts {
+                if !declared_facts.contains(fact_id.as_str()) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' grants missing fact '{}'",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+                if !granted.insert(fact_id) {
+                    return Err(format!(
+                        "Topic '{}' on NPC '{}' grants fact '{}' more than once",
+                        topic.id, npc.id, fact_id
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_npc_topics(world: &WorldDefinition) -> Result<(), String> {
     for npc in &world.npcs {
         let mut topic_ids = HashSet::new();
@@ -339,6 +425,8 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_npc_ids(world)?;
     validate_unique_npc_ids(world)?;
     validate_npc_topics(world)?;
+    validate_fact_ids(world)?;
+    validate_topic_fact_references(world)?;
     validate_room_npc_references(world)?;
     validate_unique_npc_placements(world)?;
     validate_room_item_references(world)?;
@@ -357,7 +445,8 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition, RoomDefinition,
+        FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition,
+        RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -366,6 +455,7 @@ mod tests {
             id: "test_world".to_string(),
             name: "Test World".to_string(),
             starting_room: "start".to_string(),
+            facts: vec![],
             items: vec![],
             features: vec![],
             npcs: vec![],
@@ -790,6 +880,9 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             response: "A test response.".to_string(),
+            requires_facts: vec![],
+            excludes_facts: vec![],
+            grants_facts: vec![],
         }
     }
 
@@ -855,6 +948,205 @@ mod tests {
         assert_eq!(
             validate_world(&world),
             Err("Topic 'punctuation' on NPC 'test_npc' has no targetable name".to_string())
+        );
+    }
+
+    #[test]
+    fn valid_declared_fact_passes_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "knows_secret".to_string(),
+        });
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn empty_fact_id_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "  ".to_string(),
+        });
+
+        assert_eq!(validate_world(&world), Err("Fact has no id".to_string()));
+    }
+
+    #[test]
+    fn invalid_fact_id_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "bad!".to_string(),
+        });
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Fact id has invalid characters: bad!".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_fact_ids_fail_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "shared_fact".to_string(),
+        });
+        world.facts.push(FactDefinition {
+            id: "shared_fact".to_string(),
+        });
+
+        assert_eq!(
+            validate_world(&world),
+            Err("World has duplicate fact id 'shared_fact'".to_string())
+        );
+    }
+
+    #[test]
+    fn topic_required_fact_must_be_declared() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.requires_facts.push("missing_fact".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' requires missing fact 'missing_fact'".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn topic_excluded_fact_must_be_declared() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.excludes_facts.push("missing_fact".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' excludes missing fact 'missing_fact'".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_topic_fact_condition_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_fact".to_string(),
+        });
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.requires_facts = vec!["known_fact".to_string(), "known_fact".to_string()];
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' requires fact 'known_fact' more than once"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_excluded_topic_fact_condition_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_fact".to_string(),
+        });
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.excludes_facts = vec!["known_fact".to_string(), "known_fact".to_string()];
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' excludes fact 'known_fact' more than once"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn topic_granted_fact_must_be_declared() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.grants_facts.push("missing_fact".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Topic 'secret' on NPC 'test_npc' grants missing fact 'missing_fact'".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_granted_topic_fact_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_fact".to_string(),
+        });
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.grants_facts = vec!["known_fact".to_string(), "known_fact".to_string()];
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' grants fact 'known_fact' more than once"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn topic_may_exclude_and_grant_same_fact() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_fact".to_string(),
+        });
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.excludes_facts.push("known_fact".to_string());
+        topic.grants_facts.push("known_fact".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn contradictory_topic_fact_condition_fails_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_fact".to_string(),
+        });
+        let mut npc = test_npc("test_npc", "Test NPC");
+        let mut topic = test_topic("secret", "Secret");
+        topic.requires_facts.push("known_fact".to_string());
+        topic.excludes_facts.push("known_fact".to_string());
+        npc.topics.push(topic);
+        world.npcs.push(npc);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Topic 'secret' on NPC 'test_npc' both requires and excludes fact 'known_fact'"
+                    .to_string()
+            )
         );
     }
 }

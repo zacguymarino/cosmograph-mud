@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::definition::{
     FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition, RoomDefinition,
 };
 use crate::game::direction::Direction;
 use crate::game::feature::RoomFeature;
-use crate::game::ids::{FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId};
+use crate::game::ids::{FactId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId};
 use crate::game::item::Item;
 use crate::game::npc::{Npc, NpcTopic};
 use crate::game::room::Room;
@@ -35,6 +35,11 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
 }
 
 pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
+    let facts = definition
+        .facts
+        .into_iter()
+        .map(|fact| FactId(fact.id))
+        .collect::<HashSet<_>>();
     let mut rooms = HashMap::new();
     for room_definition in definition.rooms {
         let room = convert_room(room_definition)?;
@@ -63,6 +68,7 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         id: WorldId(definition.id),
         name: definition.name,
         starting_room: RoomId(definition.starting_room),
+        facts,
         items,
         features,
         npcs,
@@ -90,6 +96,9 @@ pub fn convert_npc_topic(definition: NpcTopicDefinition) -> NpcTopic {
         id: NpcTopicId(definition.id),
         name: definition.name,
         response: definition.response,
+        requires_facts: definition.requires_facts.into_iter().map(FactId).collect(),
+        excludes_facts: definition.excludes_facts.into_iter().map(FactId).collect(),
+        grants_facts: definition.grants_facts.into_iter().map(FactId).collect(),
     }
 }
 
@@ -113,7 +122,9 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world_data::definition::{FeatureDefinition, ItemDefinition, RoomDefinition};
+    use crate::world_data::definition::{
+        FactDefinition, FeatureDefinition, ItemDefinition, RoomDefinition,
+    };
     use std::collections::HashMap;
 
     fn valid_room_definition() -> RoomDefinition {
@@ -136,6 +147,9 @@ mod tests {
             id: "test_world".to_string(),
             name: "Test World".to_string(),
             starting_room: "start".to_string(),
+            facts: vec![FactDefinition {
+                id: "knows_secret".to_string(),
+            }],
             items: vec![ItemDefinition {
                 id: "test_item".to_string(),
                 name: "Test Item".to_string(),
@@ -157,6 +171,9 @@ mod tests {
                     id: "test_topic".to_string(),
                     name: "Test Topic".to_string(),
                     response: "This is the test topic response.".to_string(),
+                    requires_facts: vec!["knows_secret".to_string()],
+                    excludes_facts: vec![],
+                    grants_facts: vec!["knows_secret".to_string()],
                 }],
             }],
             rooms: vec![
@@ -200,6 +217,7 @@ mod tests {
         assert_eq!(world.items.len(), 1);
         assert_eq!(world.features.len(), 1);
         assert_eq!(world.npcs.len(), 1);
+        assert!(world.declares_fact(&FactId("knows_secret".to_string())));
         assert_eq!(item.name, "Test Item");
         assert_eq!(feature.name, "Test Feature");
         assert_eq!(npc.name, "Test NPC");
@@ -294,6 +312,9 @@ mod tests {
                 id: "test_topic".to_string(),
                 name: "Test Topic".to_string(),
                 response: "This is the test topic response.".to_string(),
+                requires_facts: vec![],
+                excludes_facts: vec![],
+                grants_facts: vec![],
             }],
         });
 
@@ -304,5 +325,8 @@ mod tests {
         assert_eq!(npc.greeting, "Hello from the test NPC.");
         assert_eq!(npc.topics.len(), 1);
         assert_eq!(npc.topics[0].id, NpcTopicId("test_topic".to_string()));
+        assert!(npc.topics[0].requires_facts.is_empty());
+        assert!(npc.topics[0].excludes_facts.is_empty());
+        assert!(npc.topics[0].grants_facts.is_empty());
     }
 }

@@ -1,10 +1,13 @@
-use super::ids::{NpcId, NpcTopicId};
+use super::ids::{FactId, NpcId, NpcTopicId};
 
 #[derive(Debug, Clone)]
 pub struct NpcTopic {
     pub id: NpcTopicId,
     pub name: String,
     pub response: String,
+    pub requires_facts: Vec<FactId>,
+    pub excludes_facts: Vec<FactId>,
+    pub grants_facts: Vec<FactId>,
 }
 
 #[derive(Debug, Clone)]

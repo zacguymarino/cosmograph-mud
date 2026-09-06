@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::feature::RoomFeature;
-use super::ids::{FeatureId, ItemId, NpcId, RoomId, WorldId};
+use super::ids::{FactId, FeatureId, ItemId, NpcId, RoomId, WorldId};
 use super::item::Item;
 use super::npc::Npc;
 use super::room::Room;
@@ -11,6 +11,7 @@ pub struct World {
     pub id: WorldId,
     pub name: String,
     pub starting_room: RoomId,
+    pub facts: HashSet<FactId>,
     pub items: HashMap<ItemId, Item>,
     pub features: HashMap<FeatureId, RoomFeature>,
     pub npcs: HashMap<NpcId, Npc>,
@@ -36,6 +37,10 @@ impl World {
 
     pub fn npc(&self, id: &NpcId) -> Option<&Npc> {
         self.npcs.get(id)
+    }
+
+    pub fn declares_fact(&self, id: &FactId) -> bool {
+        self.facts.contains(id)
     }
 }
 
@@ -94,6 +99,7 @@ mod tests {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
+            facts: HashSet::new(),
             items,
             features,
             npcs,
@@ -187,5 +193,14 @@ mod tests {
     fn missing_npc_returns_none() {
         let world = valid_world();
         assert!(world.npc(&NpcId("missing".to_string())).is_none());
+    }
+
+    #[test]
+    fn declared_fact_can_be_found() {
+        let mut world = valid_world();
+        world.facts.insert(FactId("known_fact".to_string()));
+
+        assert!(world.declares_fact(&FactId("known_fact".to_string())));
+        assert!(!world.declares_fact(&FactId("missing_fact".to_string())));
     }
 }

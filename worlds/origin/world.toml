@@ -2,6 +2,9 @@ id = "origin"
 name = "Origin"
 starting_room = "origin_plaza"
 
+[[facts]]
+id = "heard_about_old_observatory"
+
 [[items]]
 id = "rusty_key"
 name = "Rusty Key"
@@ -40,6 +43,19 @@ response = "Origin Plaza is just west of here. Most new arrivals find their bear
 id = "rusty_tavern"
 name = "the Rusty Tavern"
 response = "The tavern is old, but its doors stay open to travelers who bring more stories than trouble."
+
+[[npcs.topics]]
+id = "strange_lights"
+name = "the strange lights"
+response = "Travelers sometimes report lights moving beneath the old observatory's broken dome."
+excludes_facts = ["heard_about_old_observatory"]
+grants_facts = ["heard_about_old_observatory"]
+
+[[npcs.topics]]
+id = "old_observatory"
+name = "the old observatory"
+response = "Keep your voice down. The old observatory is supposed to be abandoned, but lights still move behind its broken dome."
+requires_facts = ["heard_about_old_observatory"]
 
 [[rooms]]
 id = "origin_plaza"

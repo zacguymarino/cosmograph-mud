@@ -18,3 +18,12 @@ pub struct NpcId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NpcTopicId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FactId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FactKey {
+    pub world_id: WorldId,
+    pub fact_id: FactId,
+}

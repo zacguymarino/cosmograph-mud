@@ -13,6 +13,8 @@ pub struct WorldDefinition {
     pub features: Vec<FeatureDefinition>,
     #[serde(default)]
     pub npcs: Vec<NpcDefinition>,
+    #[serde(default)]
+    pub facts: Vec<FactDefinition>,
 
     pub rooms: Vec<RoomDefinition>,
 }
@@ -60,8 +62,19 @@ pub struct NpcDefinition {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct FactDefinition {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NpcTopicDefinition {
     pub id: String,
     pub name: String,
     pub response: String,
+    #[serde(default)]
+    pub requires_facts: Vec<String>,
+    #[serde(default)]
+    pub excludes_facts: Vec<String>,
+    #[serde(default)]
+    pub grants_facts: Vec<String>,
 }

@@ -6,8 +6,9 @@ use super::event::{
     ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, TakeFailureReason,
     TalkFailureReason,
 };
-use super::ids::{FeatureId, ItemId, NpcId};
+use super::ids::{FactKey, FeatureId, ItemId, NpcId};
 use super::naming::normalize_name;
+use super::npc::NpcTopic;
 use super::world::World;
 
 #[derive(Debug)]
@@ -26,6 +27,29 @@ enum ExamineTarget {
 impl Game {
     pub fn new(world: World, character: Character) -> Self {
         Self { world, character }
+    }
+
+    fn topic_is_available(&self, topic: &NpcTopic) -> bool {
+        let character_has_fact = |fact_id: &super::ids::FactId| {
+            self.character.facts.contains(&FactKey {
+                world_id: self.world.id.clone(),
+                fact_id: fact_id.clone(),
+            })
+        };
+
+        topic.requires_facts.iter().all(character_has_fact)
+            && topic
+                .excludes_facts
+                .iter()
+                .all(|fact_id| !character_has_fact(fact_id))
+    }
+
+    fn available_topic_names(&self, topics: &[NpcTopic]) -> Vec<String> {
+        topics
+            .iter()
+            .filter(|topic| self.topic_is_available(topic))
+            .map(|topic| topic.name.clone())
+            .collect()
     }
 
     fn observe_current_room(&self) -> Option<GameEvent> {
@@ -456,11 +480,11 @@ impl Game {
             npc_id: npc.id.clone(),
             name: npc.name.clone(),
             greeting: npc.greeting.clone(),
-            topics: npc.topics.iter().map(|topic| topic.name.clone()).collect(),
+            topics: self.available_topic_names(&npc.topics),
         }]
     }
 
-    fn attempt_ask(&self, mut query: AskQuery) -> Vec<GameEvent> {
+    fn attempt_ask(&mut self, mut query: AskQuery) -> Vec<GameEvent> {
         query.npc.name = normalize_name(&query.npc.name);
         query.topic = normalize_name(&query.topic);
         let matches = self.matching_room_npcs(&query.npc.name);
@@ -514,11 +538,9 @@ impl Game {
             }];
         };
 
-        let Some(topic) = npc
-            .topics
-            .iter()
-            .find(|topic| normalize_name(&topic.name) == topic_query)
-        else {
+        let Some(topic) = npc.topics.iter().find(|topic| {
+            self.topic_is_available(topic) && normalize_name(&topic.name) == topic_query
+        }) else {
             return vec![GameEvent::AskFailed {
                 character_id: self.character.id.clone(),
                 npc_query,
@@ -529,13 +551,38 @@ impl Game {
             }];
         };
 
+        let npc_id = npc.id.clone();
+        let npc_name = npc.name.clone();
+        let topic = topic.clone();
+        let previous_topics = self.available_topic_names(&npc.topics);
+
+        let mut learned_facts = Vec::new();
+        for fact_id in &topic.grants_facts {
+            let fact = FactKey {
+                world_id: self.world.id.clone(),
+                fact_id: fact_id.clone(),
+            };
+            if self.character.facts.insert(fact.clone()) {
+                learned_facts.push(fact);
+            }
+        }
+
+        let current_topics = self
+            .world
+            .npc(&npc_id)
+            .map(|npc| self.available_topic_names(&npc.topics))
+            .unwrap_or_default();
+        let updated_topics = (previous_topics != current_topics).then_some(current_topics);
+
         vec![GameEvent::NpcAnswered {
             character_id: self.character.id.clone(),
-            npc_id: npc.id.clone(),
-            npc_name: npc.name.clone(),
+            npc_id,
+            npc_name,
             topic_id: topic.id.clone(),
             topic_name: topic.name.clone(),
             response: topic.response.clone(),
+            learned_facts,
+            updated_topics,
         }]
     }
 
@@ -694,11 +741,13 @@ impl Game {
 mod tests {
     use super::*;
     use crate::game::feature::RoomFeature;
-    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId};
+    use crate::game::ids::{
+        CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId,
+    };
     use crate::game::item::Item;
     use crate::game::npc::{Npc, NpcTopic};
     use crate::game::room::Room;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::num::NonZeroUsize;
 
     fn game_with_character_in(current_room: &str) -> Game {
@@ -758,6 +807,9 @@ mod tests {
                 id: NpcTopicId("test_topic".to_string()),
                 name: "Test Topic".to_string(),
                 response: "This is the test topic response.".to_string(),
+                requires_facts: vec![],
+                excludes_facts: vec![],
+                grants_facts: vec![],
             }],
         };
         let mut npcs = HashMap::new();
@@ -767,6 +819,7 @@ mod tests {
             id: WorldId("test_world".to_string()),
             name: "Test World".to_string(),
             starting_room: RoomId("start".to_string()),
+            facts: HashSet::new(),
             items,
             features,
             npcs,
@@ -778,9 +831,49 @@ mod tests {
             name: "Player".to_string(),
             current_room: RoomId(current_room.to_string()),
             inventory: vec![],
+            facts: HashSet::new(),
         };
 
         Game::new(world, character)
+    }
+
+    fn add_conditional_topic(
+        game: &mut Game,
+        requires_facts: Vec<FactId>,
+        excludes_facts: Vec<FactId>,
+    ) {
+        game.world
+            .npcs
+            .get_mut(&NpcId("test_npc".to_string()))
+            .expect("test NPC should exist")
+            .topics
+            .push(NpcTopic {
+                id: NpcTopicId("secret_topic".to_string()),
+                name: "Secret Topic".to_string(),
+                response: "A conditional response.".to_string(),
+                requires_facts,
+                excludes_facts,
+                grants_facts: vec![],
+            });
+    }
+
+    fn give_fact(game: &mut Game, world_id: &str, fact_id: &str) {
+        game.character.facts.insert(FactKey {
+            world_id: WorldId(world_id.to_string()),
+            fact_id: FactId(fact_id.to_string()),
+        });
+    }
+
+    fn set_topic_grants(game: &mut Game, topic_id: &str, grants_facts: Vec<FactId>) {
+        game.world
+            .npcs
+            .get_mut(&NpcId("test_npc".to_string()))
+            .expect("test NPC should exist")
+            .topics
+            .iter_mut()
+            .find(|topic| topic.id == NpcTopicId(topic_id.to_string()))
+            .expect("test topic should exist")
+            .grants_facts = grants_facts;
     }
 
     #[test]
@@ -1659,7 +1752,7 @@ mod tests {
 
     #[test]
     fn asking_nearby_npc_about_known_topic_returns_response() {
-        let game = game_with_character_in("start");
+        let mut game = game_with_character_in("start");
         assert_eq!(
             game.attempt_ask(AskQuery {
                 npc: TargetQuery::npc("test npc".to_string()),
@@ -1671,14 +1764,281 @@ mod tests {
                 npc_name: "Test NPC".to_string(),
                 topic_id: NpcTopicId("test_topic".to_string()),
                 topic_name: "Test Topic".to_string(),
-                response: "This is the test topic response.".to_string()
+                response: "This is the test topic response.".to_string(),
+                learned_facts: vec![],
+                updated_topics: None,
             }]
         );
     }
 
     #[test]
+    fn topic_without_fact_conditions_remains_available() {
+        let mut game = game_with_character_in("start");
+
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "test topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::NpcAnswered { .. }]
+        ));
+    }
+
+    #[test]
+    fn required_fact_controls_topic_discovery_and_resolution() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(&mut game, vec![FactId("knows_secret".to_string())], vec![]);
+
+        assert!(matches!(
+            game.attempt_talk(TargetQuery::npc("test npc".to_string())).as_slice(),
+            [GameEvent::NpcSpoke { topics, .. }]
+                if topics == &["Test Topic".to_string()]
+        ));
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::AskFailed {
+                reason: AskFailureReason::TopicNotFound { .. },
+                ..
+            }]
+        ));
+
+        give_fact(&mut game, "test_world", "knows_secret");
+
+        assert!(matches!(
+            game.attempt_talk(TargetQuery::npc("test npc".to_string())).as_slice(),
+            [GameEvent::NpcSpoke { topics, .. }]
+                if topics == &["Test Topic".to_string(), "Secret Topic".to_string()]
+        ));
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::NpcAnswered { topic_id, .. }]
+                if topic_id == &NpcTopicId("secret_topic".to_string())
+        ));
+    }
+
+    #[test]
+    fn all_required_facts_must_be_present() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(
+            &mut game,
+            vec![
+                FactId("first_fact".to_string()),
+                FactId("second_fact".to_string()),
+            ],
+            vec![],
+        );
+        give_fact(&mut game, "test_world", "first_fact");
+
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::AskFailed { .. }]
+        ));
+
+        give_fact(&mut game, "test_world", "second_fact");
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::NpcAnswered { .. }]
+        ));
+    }
+
+    #[test]
+    fn excluded_fact_hides_an_otherwise_available_topic() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(
+            &mut game,
+            vec![],
+            vec![FactId("secret_expired".to_string())],
+        );
+
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::NpcAnswered { .. }]
+        ));
+
+        give_fact(&mut game, "test_world", "secret_expired");
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::AskFailed {
+                reason: AskFailureReason::TopicNotFound { .. },
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn same_local_fact_from_another_world_does_not_unlock_topic() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(&mut game, vec![FactId("knows_secret".to_string())], vec![]);
+        give_fact(&mut game, "another_world", "knows_secret");
+
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "secret topic".to_string(),
+            })
+            .as_slice(),
+            [GameEvent::AskFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn reading_dialogue_does_not_change_character_facts() {
+        let mut game = game_with_character_in("start");
+        give_fact(&mut game, "test_world", "existing_fact");
+        let original_facts = game.character.facts.clone();
+
+        game.attempt_talk(TargetQuery::npc("test npc".to_string()));
+        game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert_eq!(game.character.facts, original_facts);
+    }
+
+    #[test]
+    fn answering_topic_grants_world_qualified_facts() {
+        let mut game = game_with_character_in("start");
+        set_topic_grants(
+            &mut game,
+            "test_topic",
+            vec![
+                FactId("first_fact".to_string()),
+                FactId("second_fact".to_string()),
+            ],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        let expected_facts = vec![
+            FactKey {
+                world_id: WorldId("test_world".to_string()),
+                fact_id: FactId("first_fact".to_string()),
+            },
+            FactKey {
+                world_id: WorldId("test_world".to_string()),
+                fact_id: FactId("second_fact".to_string()),
+            },
+        ];
+        assert!(
+            expected_facts
+                .iter()
+                .all(|fact| game.character.facts.contains(fact))
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::NpcAnswered {
+                learned_facts,
+                updated_topics: None,
+                ..
+            }] if learned_facts == &expected_facts
+        ));
+    }
+
+    #[test]
+    fn learned_fact_refreshes_topics_when_availability_changes() {
+        let mut game = game_with_character_in("start");
+        let fact_id = FactId("knows_secret".to_string());
+        set_topic_grants(&mut game, "test_topic", vec![fact_id.clone()]);
+        game.world
+            .npcs
+            .get_mut(&NpcId("test_npc".to_string()))
+            .unwrap()
+            .topics[0]
+            .excludes_facts
+            .push(fact_id.clone());
+        add_conditional_topic(&mut game, vec![fact_id], vec![]);
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::NpcAnswered {
+                updated_topics: Some(topics),
+                ..
+            }] if topics == &["Secret Topic".to_string()]
+        ));
+    }
+
+    #[test]
+    fn repeated_fact_grant_reports_only_newly_learned_facts() {
+        let mut game = game_with_character_in("start");
+        set_topic_grants(
+            &mut game,
+            "test_topic",
+            vec![FactId("known_fact".to_string())],
+        );
+        give_fact(&mut game, "test_world", "known_fact");
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::NpcAnswered {
+                learned_facts,
+                updated_topics: None,
+                ..
+            }] if learned_facts.is_empty()
+        ));
+        assert_eq!(game.character.facts.len(), 1);
+    }
+
+    #[test]
+    fn unavailable_topic_does_not_grant_facts() {
+        let mut game = game_with_character_in("start");
+        add_conditional_topic(&mut game, vec![FactId("required_fact".to_string())], vec![]);
+        set_topic_grants(
+            &mut game,
+            "secret_topic",
+            vec![FactId("forbidden_grant".to_string())],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "secret topic".to_string(),
+        });
+
+        assert!(matches!(events.as_slice(), [GameEvent::AskFailed { .. }]));
+        assert!(game.character.facts.is_empty());
+    }
+
+    #[test]
     fn asking_about_unknown_topic_reports_selected_npc() {
-        let game = game_with_character_in("start");
+        let mut game = game_with_character_in("start");
         assert!(matches!(
             game.attempt_ask(AskQuery {
                 npc: TargetQuery::npc("test npc".to_string()),
@@ -1694,7 +2054,7 @@ mod tests {
 
     #[test]
     fn asking_npc_in_another_room_fails_before_topic_lookup() {
-        let game = game_with_character_in("next_room");
+        let mut game = game_with_character_in("next_room");
         assert!(matches!(
             game.attempt_ask(AskQuery {
                 npc: TargetQuery::npc("test npc".to_string()),
@@ -1764,6 +2124,9 @@ mod tests {
                 id: NpcTopicId("test_topic".to_string()),
                 name: "Test Topic".to_string(),
                 response: "The second NPC answers.".to_string(),
+                requires_facts: vec![],
+                excludes_facts: vec![],
+                grants_facts: vec![],
             }],
         };
         game.world.npcs.insert(second.id.clone(), second);
@@ -1779,7 +2142,7 @@ mod tests {
 
     #[test]
     fn out_of_range_ask_reports_matching_npc_count() {
-        let game = game_with_character_in("start");
+        let mut game = game_with_character_in("start");
         assert!(matches!(
             game.attempt_ask(AskQuery {
                 npc: TargetQuery::npc("test npc".to_string())

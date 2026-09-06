@@ -1,6 +1,6 @@
 use super::command::TargetKind;
 use super::direction::Direction;
-use super::ids::{CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
+use super::ids::{CharacterId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TakeFailureReason {
@@ -177,6 +177,8 @@ pub enum GameEvent {
         topic_id: NpcTopicId,
         topic_name: String,
         response: String,
+        learned_facts: Vec<FactKey>,
+        updated_topics: Option<Vec<String>>,
     },
 
     AskFailed {
