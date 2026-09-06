@@ -1,7 +1,8 @@
 use crate::game::command::TargetKind;
 use crate::game::direction::Direction;
 use crate::game::event::{
-    DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason, TalkFailureReason,
+    AskFailureReason, DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason,
+    TalkFailureReason,
 };
 
 fn direction_name(direction: &Direction) -> &'static str {
@@ -92,6 +93,7 @@ pub fn render_event(event: &GameEvent) -> String {
             "  drop <item>",
             "  inventory (inv, i)",
             "  talk to <npc>",
+            "  ask <npc> about <topic>",
             "  help (commands)",
             "  quit (exit)",
         ]
@@ -207,8 +209,21 @@ pub fn render_event(event: &GameEvent) -> String {
             format!("{}\n{}", npc.name, npc.description)
         }
 
-        GameEvent::NpcSpoke { name, greeting, .. } => {
-            format!("{name} says, \"{greeting}\"")
+        GameEvent::NpcSpoke {
+            name,
+            greeting,
+            topics,
+            ..
+        } => {
+            let speech = format!("{name} says, \"{greeting}\"");
+            if topics.is_empty() {
+                speech
+            } else {
+                format!(
+                    "{speech}\nYou could ask {name} about: {}.",
+                    topics.join(", ")
+                )
+            }
         }
 
         GameEvent::TalkFailed {
@@ -240,6 +255,50 @@ pub fn render_event(event: &GameEvent) -> String {
                 },
             ..
         } => format!("There is no #{requested} '{query}' here; {available} NPCs matched."),
+
+        GameEvent::NpcAnswered {
+            npc_name, response, ..
+        } => format!("{npc_name} says, \"{response}\""),
+
+        GameEvent::AskFailed {
+            npc_query,
+            reason: AskFailureReason::NpcNotFound,
+            ..
+        } => format!("You do not see '{npc_query}' here to ask."),
+
+        GameEvent::AskFailed {
+            npc_query,
+            topic_query,
+            reason: AskFailureReason::NpcAmbiguous { match_count },
+            ..
+        } => {
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {npc_query} (npc)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one NPC matches '{npc_query}':\n{choices}\nTry 'ask 1 {npc_query} about {topic_query}' or another listed number."
+            )
+        }
+
+        GameEvent::AskFailed {
+            npc_query,
+            topic_query,
+            reason:
+                AskFailureReason::NpcOrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => format!(
+            "There is no #{requested} '{npc_query}' here; {available} NPCs matched for the topic '{topic_query}'."
+        ),
+
+        GameEvent::AskFailed {
+            topic_query,
+            reason: AskFailureReason::TopicNotFound { npc_name },
+            ..
+        } => format!("{npc_name} has nothing to say about '{topic_query}'."),
 
         GameEvent::ExamineFailed {
             query,
@@ -292,7 +351,7 @@ mod tests {
     use crate::game::event::{
         ExaminedFeature, ExaminedItem, ExaminedNpc, ObservedFeature, ObservedItem, ObservedNpc,
     };
-    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, RoomId};
+    use crate::game::ids::{CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
 
     #[test]
     fn room_observation_renders_room_details() {
@@ -382,6 +441,7 @@ mod tests {
         assert!(rendered.contains("look [item|feature|npc] <target>"));
         assert!(rendered.contains("help (commands)"));
         assert!(rendered.contains("talk to <npc>"));
+        assert!(rendered.contains("ask <npc> about <topic>"));
     }
 
     #[test]
@@ -544,11 +604,101 @@ mod tests {
             npc_id: NpcId("mara_voss".to_string()),
             name: "Mara Voss".to_string(),
             greeting: "Welcome to the Rusty Tavern.".to_string(),
+            topics: vec![],
         };
 
         assert_eq!(
             render_event(&event),
             "Mara Voss says, \"Welcome to the Rusty Tavern.\""
+        );
+    }
+
+    #[test]
+    fn npc_greeting_lists_public_topics() {
+        let event = GameEvent::NpcSpoke {
+            character_id: CharacterId("player".to_string()),
+            npc_id: NpcId("mara_voss".to_string()),
+            name: "Mara Voss".to_string(),
+            greeting: "Welcome.".to_string(),
+            topics: vec!["Origin Plaza".to_string()],
+        };
+        assert_eq!(
+            render_event(&event),
+            "Mara Voss says, \"Welcome.\"\nYou could ask Mara Voss about: Origin Plaza."
+        );
+    }
+
+    #[test]
+    fn npc_topic_response_renders_as_speech() {
+        let event = GameEvent::NpcAnswered {
+            character_id: CharacterId("player".to_string()),
+            npc_id: NpcId("mara_voss".to_string()),
+            npc_name: "Mara Voss".to_string(),
+            topic_id: NpcTopicId("origin_plaza".to_string()),
+            topic_name: "Origin Plaza".to_string(),
+            response: "It is west.".to_string(),
+        };
+        assert_eq!(render_event(&event), "Mara Voss says, \"It is west.\"");
+    }
+
+    #[test]
+    fn unknown_npc_topic_renders_message() {
+        let event = GameEvent::AskFailed {
+            character_id: CharacterId("player".to_string()),
+            npc_query: "mara voss".to_string(),
+            topic_query: "dragon".to_string(),
+            reason: AskFailureReason::TopicNotFound {
+                npc_name: "Mara Voss".to_string(),
+            },
+        };
+        assert_eq!(
+            render_event(&event),
+            "Mara Voss has nothing to say about 'dragon'."
+        );
+    }
+
+    #[test]
+    fn missing_ask_npc_renders_message() {
+        let event = GameEvent::AskFailed {
+            character_id: CharacterId("player".to_string()),
+            npc_query: "missing npc".to_string(),
+            topic_query: "plaza".to_string(),
+            reason: AskFailureReason::NpcNotFound,
+        };
+        assert_eq!(
+            render_event(&event),
+            "You do not see 'missing npc' here to ask."
+        );
+    }
+
+    #[test]
+    fn ambiguous_ask_npc_renders_numbered_command() {
+        let event = GameEvent::AskFailed {
+            character_id: CharacterId("player".to_string()),
+            npc_query: "guard".to_string(),
+            topic_query: "old gate".to_string(),
+            reason: AskFailureReason::NpcAmbiguous { match_count: 2 },
+        };
+        assert_eq!(
+            render_event(&event),
+            "More than one NPC matches 'guard':\n1. guard (npc)\n2. guard (npc)\nTry 'ask 1 guard about old gate' or another listed number."
+        );
+    }
+
+    #[test]
+    fn out_of_range_ask_npc_renders_counts() {
+        let event = GameEvent::AskFailed {
+            character_id: CharacterId("player".to_string()),
+            npc_query: "guard".to_string(),
+            topic_query: "old gate".to_string(),
+            reason: AskFailureReason::NpcOrdinalOutOfRange {
+                requested: 3,
+                available: 2,
+            },
+        };
+        assert_eq!(
+            render_event(&event),
+            "There is no #3 'guard' here; 2 NPCs matched for the topic 'old gate'."
         );
     }
 

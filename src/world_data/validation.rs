@@ -1,4 +1,5 @@
 use super::definition::WorldDefinition;
+use crate::game::naming::normalize_name;
 use std::collections::HashSet;
 
 fn validate_starting_room(world: &WorldDefinition) -> Result<(), String> {
@@ -286,6 +287,47 @@ fn validate_unique_npc_placements(world: &WorldDefinition) -> Result<(), String>
     Ok(())
 }
 
+fn validate_npc_topics(world: &WorldDefinition) -> Result<(), String> {
+    for npc in &world.npcs {
+        let mut topic_ids = HashSet::new();
+        let mut topic_names = HashSet::new();
+        for topic in &npc.topics {
+            if topic.id.trim().is_empty() {
+                return Err(format!(
+                    "Topic '{}' on NPC '{}' has no id",
+                    topic.name, npc.id
+                ));
+            }
+            if !is_valid_id(&topic.id) {
+                return Err(format!(
+                    "Id for topic '{}' on NPC '{}' has invalid characters: {}",
+                    topic.name, npc.id, topic.id
+                ));
+            }
+            if !topic_ids.insert(&topic.id) {
+                return Err(format!(
+                    "NPC '{}' has duplicate topic id '{}'",
+                    npc.id, topic.id
+                ));
+            }
+            let normalized_name = normalize_name(&topic.name);
+            if normalized_name.is_empty() {
+                return Err(format!(
+                    "Topic '{}' on NPC '{}' has no targetable name",
+                    topic.id, npc.id
+                ));
+            }
+            if !topic_names.insert(normalized_name.clone()) {
+                return Err(format!(
+                    "NPC '{}' has duplicate normalized topic name '{}'",
+                    npc.id, normalized_name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_world_id(world)?;
     validate_item_ids(world)?;
@@ -296,6 +338,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_unique_feature_placements(world)?;
     validate_npc_ids(world)?;
     validate_unique_npc_ids(world)?;
+    validate_npc_topics(world)?;
     validate_room_npc_references(world)?;
     validate_unique_npc_placements(world)?;
     validate_room_item_references(world)?;
@@ -314,7 +357,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FeatureDefinition, ItemDefinition, NpcDefinition, RoomDefinition,
+        FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -672,6 +715,7 @@ mod tests {
             room_description: "A test NPC stands here.".to_string(),
             description: "An NPC used for testing.".to_string(),
             greeting: "Hello from the test NPC.".to_string(),
+            topics: vec![],
         }
     }
 
@@ -738,6 +782,79 @@ mod tests {
         assert_eq!(
             validate_world(&world),
             Err("NPC 'test_npc' is placed more than once".to_string())
+        );
+    }
+
+    fn test_topic(id: &str, name: &str) -> NpcTopicDefinition {
+        NpcTopicDefinition {
+            id: id.to_string(),
+            name: name.to_string(),
+            response: "A test response.".to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_npc_topic_id_fails_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("  ", "Test Topic"));
+        world.npcs.push(npc);
+        assert_eq!(
+            validate_world(&world),
+            Err("Topic 'Test Topic' on NPC 'test_npc' has no id".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_npc_topic_id_fails_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("bad!", "Test Topic"));
+        world.npcs.push(npc);
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Id for topic 'Test Topic' on NPC 'test_npc' has invalid characters: bad!"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_npc_topic_ids_fail_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("shared", "First Topic"));
+        npc.topics.push(test_topic("shared", "Second Topic"));
+        world.npcs.push(npc);
+        assert_eq!(
+            validate_world(&world),
+            Err("NPC 'test_npc' has duplicate topic id 'shared'".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_normalized_npc_topic_names_fail_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("first", "Old-Gate"));
+        npc.topics.push(test_topic("second", "old gate"));
+        world.npcs.push(npc);
+        assert_eq!(
+            validate_world(&world),
+            Err("NPC 'test_npc' has duplicate normalized topic name 'old gate'".to_string())
+        );
+    }
+
+    #[test]
+    fn untargetable_npc_topic_name_fails_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("punctuation", "---"));
+        world.npcs.push(npc);
+        assert_eq!(
+            validate_world(&world),
+            Err("Topic 'punctuation' on NPC 'test_npc' has no targetable name".to_string())
         );
     }
 }

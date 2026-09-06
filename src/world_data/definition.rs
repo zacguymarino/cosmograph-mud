@@ -55,4 +55,13 @@ pub struct NpcDefinition {
     pub room_description: String,
     pub description: String,
     pub greeting: String,
+    #[serde(default)]
+    pub topics: Vec<NpcTopicDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NpcTopicDefinition {
+    pub id: String,
+    pub name: String,
+    pub response: String,
 }

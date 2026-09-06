@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
-use super::definition::{FeatureDefinition, ItemDefinition, NpcDefinition, RoomDefinition};
+use super::definition::{
+    FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition, RoomDefinition,
+};
 use crate::game::direction::Direction;
 use crate::game::feature::RoomFeature;
-use crate::game::ids::{FeatureId, ItemId, NpcId, RoomId, WorldId};
+use crate::game::ids::{FeatureId, ItemId, NpcId, NpcTopicId, RoomId, WorldId};
 use crate::game::item::Item;
-use crate::game::npc::Npc;
+use crate::game::npc::{Npc, NpcTopic};
 use crate::game::room::Room;
 use crate::game::world::World;
 use crate::world_data::definition::WorldDefinition;
@@ -75,6 +77,19 @@ pub fn convert_npc(definition: NpcDefinition) -> Npc {
         room_description: definition.room_description,
         description: definition.description,
         greeting: definition.greeting,
+        topics: definition
+            .topics
+            .into_iter()
+            .map(convert_npc_topic)
+            .collect(),
+    }
+}
+
+pub fn convert_npc_topic(definition: NpcTopicDefinition) -> NpcTopic {
+    NpcTopic {
+        id: NpcTopicId(definition.id),
+        name: definition.name,
+        response: definition.response,
     }
 }
 
@@ -138,6 +153,11 @@ mod tests {
                 room_description: "A test NPC stands here.".to_string(),
                 description: "An NPC used for testing.".to_string(),
                 greeting: "Hello from the test NPC.".to_string(),
+                topics: vec![NpcTopicDefinition {
+                    id: "test_topic".to_string(),
+                    name: "Test Topic".to_string(),
+                    response: "This is the test topic response.".to_string(),
+                }],
             }],
             rooms: vec![
                 valid_room_definition(),
@@ -270,6 +290,11 @@ mod tests {
             room_description: "A test NPC stands here.".to_string(),
             description: "An NPC used for testing.".to_string(),
             greeting: "Hello from the test NPC.".to_string(),
+            topics: vec![NpcTopicDefinition {
+                id: "test_topic".to_string(),
+                name: "Test Topic".to_string(),
+                response: "This is the test topic response.".to_string(),
+            }],
         });
 
         assert_eq!(npc.id, NpcId("test_npc".to_string()));
@@ -277,5 +302,7 @@ mod tests {
         assert_eq!(npc.room_description, "A test NPC stands here.");
         assert_eq!(npc.description, "An NPC used for testing.");
         assert_eq!(npc.greeting, "Hello from the test NPC.");
+        assert_eq!(npc.topics.len(), 1);
+        assert_eq!(npc.topics[0].id, NpcTopicId("test_topic".to_string()));
     }
 }

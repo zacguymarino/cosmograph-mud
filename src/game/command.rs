@@ -61,6 +61,12 @@ impl From<String> for TargetQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskQuery {
+    pub npc: TargetQuery,
+    pub topic: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Look,
     Exits,
@@ -71,4 +77,5 @@ pub enum Command {
     Drop(TargetQuery),
     Examine(TargetQuery),
     Talk(TargetQuery),
+    Ask(AskQuery),
 }

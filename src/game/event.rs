@@ -1,6 +1,6 @@
 use super::command::TargetKind;
 use super::direction::Direction;
-use super::ids::{CharacterId, FeatureId, ItemId, NpcId, RoomId};
+use super::ids::{CharacterId, FeatureId, ItemId, NpcId, NpcTopicId, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TakeFailureReason {
@@ -28,6 +28,14 @@ pub enum TalkFailureReason {
     NotFound,
     Ambiguous { match_count: usize },
     OrdinalOutOfRange { requested: usize, available: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskFailureReason {
+    NpcNotFound,
+    NpcAmbiguous { match_count: usize },
+    NpcOrdinalOutOfRange { requested: usize, available: usize },
+    TopicNotFound { npc_name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,12 +161,29 @@ pub enum GameEvent {
         npc_id: NpcId,
         name: String,
         greeting: String,
+        topics: Vec<String>,
     },
 
     TalkFailed {
         character_id: CharacterId,
         query: String,
         reason: TalkFailureReason,
+    },
+
+    NpcAnswered {
+        character_id: CharacterId,
+        npc_id: NpcId,
+        npc_name: String,
+        topic_id: NpcTopicId,
+        topic_name: String,
+        response: String,
+    },
+
+    AskFailed {
+        character_id: CharacterId,
+        npc_query: String,
+        topic_query: String,
+        reason: AskFailureReason,
     },
 
     ExamineFailed {

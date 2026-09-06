@@ -1,4 +1,4 @@
-use crate::game::command::{Command, TargetKind, TargetQuery};
+use crate::game::command::{AskQuery, Command, TargetKind, TargetQuery};
 use crate::game::direction::Direction;
 use crate::game::naming::normalize_name;
 use std::num::NonZeroUsize;
@@ -72,6 +72,26 @@ fn parse_direction(value: &str) -> Option<Direction> {
     }
 }
 
+fn parse_ask_query(query: &str) -> Result<Command, String> {
+    if query.starts_with("about ") {
+        return Err("ask whom?".to_string());
+    }
+    let Some((npc, topic)) = query.split_once(" about ") else {
+        return Err("ask about what?".to_string());
+    };
+    if npc.trim().is_empty() {
+        return Err("ask whom?".to_string());
+    }
+    if topic.trim().is_empty() {
+        return Err("ask about what?".to_string());
+    }
+    let npc = parse_target_query(npc, Some(TargetKind::Npc), false, "ask whom?")?;
+    Ok(Command::Ask(AskQuery {
+        npc,
+        topic: topic.to_string(),
+    }))
+}
+
 pub fn parse_command(input: &str) -> Result<Command, String> {
     let normalized = normalize_name(input);
 
@@ -133,6 +153,13 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
 
             parse_target_query(&query, Some(TargetKind::Npc), false, "talk to whom?")
                 .map(Command::Talk)
+        }
+        "ask" => Err("ask whom about what?".to_string()),
+        command if command.starts_with("ask ") => {
+            let query = command
+                .strip_prefix("ask ")
+                .expect("ask prefix was already checked");
+            parse_ask_query(query)
         }
         command if command.starts_with("talk ") => {
             let query = command
@@ -313,6 +340,45 @@ mod tests {
                 TargetQuery::npc("guard".to_string())
                     .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero"))
             ))
+        );
+    }
+
+    #[test]
+    fn ask_input_returns_separate_npc_and_topic_queries() {
+        assert_eq!(
+            parse_command("ASK Mara Voss ABOUT Origin Plaza"),
+            Ok(Command::Ask(AskQuery {
+                npc: TargetQuery::npc("mara voss".to_string()),
+                topic: "origin plaza".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn ask_supports_numbered_npc_selection() {
+        assert_eq!(
+            parse_command("ask 2 guard about old gate"),
+            Ok(Command::Ask(AskQuery {
+                npc: TargetQuery::npc("guard".to_string())
+                    .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero")),
+                topic: "old gate".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn incomplete_ask_returns_specific_error() {
+        assert_eq!(
+            parse_command("ask"),
+            Err("ask whom about what?".to_string())
+        );
+        assert_eq!(
+            parse_command("ask mara voss"),
+            Err("ask about what?".to_string())
+        );
+        assert_eq!(
+            parse_command("ask about plaza"),
+            Err("ask whom?".to_string())
         );
     }
 

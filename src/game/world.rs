@@ -85,6 +85,7 @@ mod tests {
             room_description: "A test NPC stands here.".to_string(),
             description: "An NPC used for testing.".to_string(),
             greeting: "Hello from the test NPC.".to_string(),
+            topics: vec![],
         };
         let mut npcs = HashMap::new();
         npcs.insert(npc.id.clone(), npc);

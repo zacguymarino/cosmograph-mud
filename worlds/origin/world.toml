@@ -31,6 +31,16 @@ room_description = "Mara Voss tends the tavern from behind the old wooden bar."
 description = "A sharp-eyed innkeeper in a weathered coat, Mara watches the room with practiced calm."
 greeting = "Welcome to the Rusty Tavern. If you're newly arrived, the plaza is west of here."
 
+[[npcs.topics]]
+id = "origin_plaza"
+name = "Origin Plaza"
+response = "Origin Plaza is just west of here. Most new arrivals find their bearings there before venturing farther."
+
+[[npcs.topics]]
+id = "rusty_tavern"
+name = "the Rusty Tavern"
+response = "The tavern is old, but its doors stay open to travelers who bring more stories than trouble."
+
 [[rooms]]
 id = "origin_plaza"
 name = "Origin Plaza"
