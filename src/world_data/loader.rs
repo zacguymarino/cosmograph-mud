@@ -20,7 +20,9 @@ pub fn load_world(path: &str) -> Result<World, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::ids::{FactId, NpcId, QuestId};
+    use crate::game::ids::RoomId;
+    use crate::game::ids::{FactId, NpcId, QuestId, QuestStepId};
+    use crate::game::quest::QuestObjective;
 
     #[test]
     fn origin_world_loads_declared_fact_and_conditional_topic() {
@@ -57,6 +59,24 @@ mod tests {
             .quest(&QuestId("lights_in_the_old_observatory".to_string()))
             .expect("observatory quest should exist");
         assert_eq!(quest.name, "Lights in the Old Observatory");
+        assert_eq!(
+            quest.starting_step,
+            QuestStepId("reach_old_observatory".to_string())
+        );
+        assert_eq!(
+            quest
+                .step(&QuestStepId("reach_old_observatory".to_string()))
+                .map(|step| step.description.as_str()),
+            Some("Find the old observatory.")
+        );
+        assert_eq!(
+            quest
+                .step(&QuestStepId("reach_old_observatory".to_string()))
+                .map(|step| &step.objective),
+            Some(&QuestObjective::ReachRoom(RoomId(
+                "old_observatory".to_string()
+            )))
+        );
         assert_eq!(
             topic.starts_quests,
             vec![QuestId("lights_in_the_old_observatory".to_string())]

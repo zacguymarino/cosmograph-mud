@@ -84,6 +84,7 @@ pub struct ObservedQuest {
     pub key: QuestKey,
     pub name: String,
     pub description: String,
+    pub current_objective: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +142,16 @@ pub enum GameEvent {
     },
 
     QuestStarted {
+        character_id: CharacterId,
+        quest: ObservedQuest,
+    },
+
+    QuestAdvanced {
+        character_id: CharacterId,
+        quest: ObservedQuest,
+    },
+
+    QuestCompleted {
         character_id: CharacterId,
         quest: ObservedQuest,
     },

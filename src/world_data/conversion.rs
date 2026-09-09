@@ -5,10 +5,12 @@ use super::definition::{
 };
 use crate::game::direction::Direction;
 use crate::game::feature::RoomFeature;
-use crate::game::ids::{FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, RoomId, WorldId};
+use crate::game::ids::{
+    FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestStepId, RoomId, WorldId,
+};
 use crate::game::item::Item;
 use crate::game::npc::{Npc, NpcTopic};
-use crate::game::quest::Quest;
+use crate::game::quest::{Quest, QuestObjective, QuestStep};
 use crate::game::room::Room;
 use crate::game::world::World;
 use crate::world_data::definition::WorldDefinition;
@@ -50,6 +52,21 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
                 id: QuestId(definition.id),
                 name: definition.name,
                 description: definition.description,
+                starting_step: QuestStepId(definition.starting_step),
+                steps: definition
+                    .steps
+                    .into_iter()
+                    .map(|step| QuestStep {
+                        id: QuestStepId(step.id),
+                        description: step.description,
+                        objective: match step.objective {
+                            super::definition::QuestObjectiveDefinition::ReachRoom { room } => {
+                                QuestObjective::ReachRoom(RoomId(room))
+                            }
+                        },
+                        next_step: step.next_step.map(QuestStepId),
+                    })
+                    .collect(),
             };
             (quest.id.clone(), quest)
         })
@@ -139,7 +156,8 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition, RoomDefinition,
+        FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition,
+        QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -170,6 +188,15 @@ mod tests {
                 id: "test_quest".to_string(),
                 name: "Test Quest".to_string(),
                 description: "A quest used for testing.".to_string(),
+                starting_step: "first_step".to_string(),
+                steps: vec![QuestStepDefinition {
+                    id: "first_step".to_string(),
+                    description: "Complete the first objective.".to_string(),
+                    objective: QuestObjectiveDefinition::ReachRoom {
+                        room: "next_room".to_string(),
+                    },
+                    next_step: None,
+                }],
             }],
             items: vec![ItemDefinition {
                 id: "test_item".to_string(),
@@ -245,6 +272,29 @@ mod tests {
                 .quest(&QuestId("test_quest".to_string()))
                 .map(|quest| quest.name.as_str()),
             Some("Test Quest")
+        );
+        let quest = world
+            .quest(&QuestId("test_quest".to_string()))
+            .expect("converted quest should exist");
+        assert_eq!(quest.starting_step, QuestStepId("first_step".to_string()));
+        assert_eq!(
+            quest
+                .step(&QuestStepId("first_step".to_string()))
+                .map(|step| step.description.as_str()),
+            Some("Complete the first objective.")
+        );
+        assert_eq!(
+            quest
+                .step(&QuestStepId("first_step".to_string()))
+                .map(|step| &step.objective),
+            Some(&QuestObjective::ReachRoom(RoomId("next_room".to_string())))
+        );
+        assert!(
+            quest
+                .step(&QuestStepId("first_step".to_string()))
+                .expect("converted step should exist")
+                .next_step
+                .is_none()
         );
         assert_eq!(item.name, "Test Item");
         assert_eq!(feature.name, "Test Feature");

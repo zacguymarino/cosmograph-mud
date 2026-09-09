@@ -9,6 +9,12 @@ id = "heard_about_old_observatory"
 id = "lights_in_the_old_observatory"
 name = "Lights in the Old Observatory"
 description = "Investigate the strange lights reported near the abandoned observatory."
+starting_step = "reach_old_observatory"
+
+[[quests.steps]]
+id = "reach_old_observatory"
+description = "Find the old observatory."
+objective = { type = "reach_room", room = "old_observatory" }
 
 [[items]]
 id = "rusty_key"
@@ -82,6 +88,15 @@ items = ["forest_rusty_key"]
 
 [rooms.exits]
 south = "origin_plaza"
+east = "old_observatory"
+
+[[rooms]]
+id = "old_observatory"
+name = "Old Observatory"
+description = "A fractured dome hangs above a circular chamber lined with silent brass instruments."
+
+[rooms.exits]
+west = "forest_path"
 
 [[rooms]]
 id = "rusty_tavern"

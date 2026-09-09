@@ -1,8 +1,8 @@
 use crate::game::command::TargetKind;
 use crate::game::direction::Direction;
 use crate::game::event::{
-    AskFailureReason, DropFailureReason, ExamineFailureReason, GameEvent, TakeFailureReason,
-    TalkFailureReason,
+    AskFailureReason, DropFailureReason, ExamineFailureReason, GameEvent, ObservedQuest,
+    TakeFailureReason, TalkFailureReason,
 };
 
 fn direction_name(direction: &Direction) -> &'static str {
@@ -11,6 +11,16 @@ fn direction_name(direction: &Direction) -> &'static str {
         Direction::South => "south",
         Direction::East => "east",
         Direction::West => "west",
+    }
+}
+
+fn render_quest_entry(quest: &ObservedQuest) -> String {
+    match &quest.current_objective {
+        Some(objective) => format!(
+            "- {}\n  {}\n  Current objective: {objective}",
+            quest.name, quest.description
+        ),
+        None => format!("- {}\n  {}", quest.name, quest.description),
     }
 }
 
@@ -169,7 +179,7 @@ pub fn render_event(event: &GameEvent) -> String {
             if !active.is_empty() {
                 let quests = active
                     .iter()
-                    .map(|quest| format!("- {}\n  {}", quest.name, quest.description))
+                    .map(render_quest_entry)
                     .collect::<Vec<_>>()
                     .join("\n");
                 sections.push(format!("Active quests:\n{quests}"));
@@ -177,7 +187,7 @@ pub fn render_event(event: &GameEvent) -> String {
             if !completed.is_empty() {
                 let quests = completed
                     .iter()
-                    .map(|quest| format!("- {}\n  {}", quest.name, quest.description))
+                    .map(render_quest_entry)
                     .collect::<Vec<_>>()
                     .join("\n");
                 sections.push(format!("Completed quests:\n{quests}"));
@@ -187,7 +197,23 @@ pub fn render_event(event: &GameEvent) -> String {
         }
 
         GameEvent::QuestStarted { quest, .. } => {
-            format!("Quest started: {}\n{}", quest.name, quest.description)
+            let mut rendered = format!("Quest started: {}\n{}", quest.name, quest.description);
+            if let Some(objective) = &quest.current_objective {
+                rendered.push_str(&format!("\nCurrent objective: {objective}"));
+            }
+            rendered
+        }
+
+        GameEvent::QuestAdvanced { quest, .. } => {
+            let mut rendered = format!("Quest updated: {}", quest.name);
+            if let Some(objective) = &quest.current_objective {
+                rendered.push_str(&format!("\nCurrent objective: {objective}"));
+            }
+            rendered
+        }
+
+        GameEvent::QuestCompleted { quest, .. } => {
+            format!("Quest completed: {}", quest.name)
         }
 
         GameEvent::ItemDropped { item, .. } => {
@@ -576,6 +602,7 @@ mod tests {
             },
             name: name.to_string(),
             description: format!("The description for {name}."),
+            current_objective: (id == "active").then(|| "Do the active thing.".to_string()),
         };
         let event = GameEvent::QuestsObserved {
             active: vec![quest("active", "Active Quest")],
@@ -584,7 +611,7 @@ mod tests {
 
         assert_eq!(
             render_event(&event),
-            "Active quests:\n- Active Quest\n  The description for Active Quest.\nCompleted quests:\n- Completed Quest\n  The description for Completed Quest."
+            "Active quests:\n- Active Quest\n  The description for Active Quest.\n  Current objective: Do the active thing.\nCompleted quests:\n- Completed Quest\n  The description for Completed Quest."
         );
     }
 
@@ -599,12 +626,55 @@ mod tests {
                 },
                 name: "Lights in the Old Observatory".to_string(),
                 description: "Investigate the strange lights.".to_string(),
+                current_objective: Some("Find the old observatory.".to_string()),
             },
         };
 
         assert_eq!(
             render_event(&event),
-            "Quest started: Lights in the Old Observatory\nInvestigate the strange lights."
+            "Quest started: Lights in the Old Observatory\nInvestigate the strange lights.\nCurrent objective: Find the old observatory."
+        );
+    }
+
+    #[test]
+    fn advanced_quest_renders_new_objective() {
+        let event = GameEvent::QuestAdvanced {
+            character_id: CharacterId("player".to_string()),
+            quest: ObservedQuest {
+                key: QuestKey {
+                    world_id: WorldId("origin".to_string()),
+                    quest_id: QuestId("observatory".to_string()),
+                },
+                name: "Lights in the Old Observatory".to_string(),
+                description: "Investigate the strange lights.".to_string(),
+                current_objective: Some("Return to Mara Voss.".to_string()),
+            },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Quest updated: Lights in the Old Observatory\nCurrent objective: Return to Mara Voss."
+        );
+    }
+
+    #[test]
+    fn completed_quest_renders_name() {
+        let event = GameEvent::QuestCompleted {
+            character_id: CharacterId("player".to_string()),
+            quest: ObservedQuest {
+                key: QuestKey {
+                    world_id: WorldId("origin".to_string()),
+                    quest_id: QuestId("observatory".to_string()),
+                },
+                name: "Lights in the Old Observatory".to_string(),
+                description: "Investigate the strange lights.".to_string(),
+                current_objective: None,
+            },
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "Quest completed: Lights in the Old Observatory"
         );
     }
 

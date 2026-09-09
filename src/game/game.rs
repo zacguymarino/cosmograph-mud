@@ -9,7 +9,7 @@ use super::event::{
 use super::ids::{FactKey, FeatureId, ItemId, NpcId, QuestKey};
 use super::naming::normalize_name;
 use super::npc::NpcTopic;
-use super::quest::{QuestProgress, QuestStatus};
+use super::quest::{QuestObjective, QuestProgress, QuestStatus};
 use super::world::World;
 
 #[derive(Debug)]
@@ -51,6 +51,73 @@ impl Game {
             .filter(|topic| self.topic_is_available(topic))
             .map(|topic| topic.name.clone())
             .collect()
+    }
+
+    fn observed_quest(&self, key: &QuestKey, progress: &QuestProgress) -> Option<ObservedQuest> {
+        if key.world_id != self.world.id {
+            return None;
+        }
+        let quest = self.world.quest(&key.quest_id)?;
+        Some(ObservedQuest {
+            key: key.clone(),
+            name: quest.name.clone(),
+            description: quest.description.clone(),
+            current_objective: match progress.status {
+                QuestStatus::Active => quest
+                    .step(&progress.current_step)
+                    .map(|step| step.description.clone()),
+                QuestStatus::Completed => None,
+            },
+        })
+    }
+
+    fn update_quests_for_room(&mut self, room_id: &super::ids::RoomId) -> Vec<GameEvent> {
+        let mut transitions = self
+            .character
+            .quests
+            .iter()
+            .filter_map(|(key, progress)| {
+                if key.world_id != self.world.id || progress.status != QuestStatus::Active {
+                    return None;
+                }
+                let quest = self.world.quest(&key.quest_id)?;
+                let step = quest.step(&progress.current_step)?;
+                match &step.objective {
+                    QuestObjective::ReachRoom(target) if target == room_id => {
+                        Some((key.clone(), step.next_step.clone()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        transitions.sort_by(|left, right| (left.0.quest_id.0).cmp(&right.0.quest_id.0));
+
+        let mut events = Vec::new();
+        for (key, next_step) in transitions {
+            let Some(progress) = self.character.quests.get_mut(&key) else {
+                continue;
+            };
+            match next_step {
+                Some(next_step) => progress.current_step = next_step,
+                None => progress.status = QuestStatus::Completed,
+            }
+            let progress = progress.clone();
+            let Some(quest) = self.observed_quest(&key, &progress) else {
+                continue;
+            };
+            events.push(match progress.status {
+                QuestStatus::Active => GameEvent::QuestAdvanced {
+                    character_id: self.character.id.clone(),
+                    quest,
+                },
+                QuestStatus::Completed => GameEvent::QuestCompleted {
+                    character_id: self.character.id.clone(),
+                    quest,
+                },
+            });
+        }
+
+        events
     }
 
     fn observe_current_room(&self) -> Option<GameEvent> {
@@ -137,6 +204,8 @@ impl Game {
 
         self.character.current_room = destination.clone();
 
+        let quest_events = self.update_quests_for_room(&destination);
+
         let movement_event = GameEvent::CharacterMoved {
             character_id: self.character.id.clone(),
             from: current_room,
@@ -149,6 +218,8 @@ impl Game {
         if let Some(room_observed) = self.observe_current_room() {
             events.push(room_observed);
         }
+
+        events.extend(quest_events);
 
         events
     }
@@ -285,16 +356,8 @@ impl Game {
         let mut completed = Vec::new();
 
         for (key, progress) in &self.character.quests {
-            if key.world_id != self.world.id {
+            let Some(observed) = self.observed_quest(key, progress) else {
                 continue;
-            }
-            let Some(quest) = self.world.quest(&key.quest_id) else {
-                continue;
-            };
-            let observed = ObservedQuest {
-                key: key.clone(),
-                name: quest.name.clone(),
-                description: quest.description.clone(),
             };
             match progress.status {
                 QuestStatus::Active => active.push(observed),
@@ -630,6 +693,7 @@ impl Game {
                 key.clone(),
                 QuestProgress {
                     status: QuestStatus::Active,
+                    current_step: quest.starting_step.clone(),
                 },
             );
             events.push(GameEvent::QuestStarted {
@@ -638,6 +702,9 @@ impl Game {
                     key,
                     name: quest.name.clone(),
                     description: quest.description.clone(),
+                    current_objective: quest
+                        .step(&quest.starting_step)
+                        .map(|step| step.description.clone()),
                 },
             });
         }
@@ -803,11 +870,11 @@ mod tests {
     use crate::game::feature::RoomFeature;
     use crate::game::ids::{
         CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestKey,
-        RoomId, WorldId,
+        QuestStepId, RoomId, WorldId,
     };
     use crate::game::item::Item;
     use crate::game::npc::{Npc, NpcTopic};
-    use crate::game::quest::{Quest, QuestProgress, QuestStatus};
+    use crate::game::quest::{Quest, QuestObjective, QuestProgress, QuestStatus, QuestStep};
     use crate::game::room::Room;
     use std::collections::{HashMap, HashSet};
     use std::num::NonZeroUsize;
@@ -882,6 +949,13 @@ mod tests {
             id: QuestId("test_quest".to_string()),
             name: "Test Quest".to_string(),
             description: "A quest used for testing.".to_string(),
+            starting_step: QuestStepId("first_step".to_string()),
+            steps: vec![QuestStep {
+                id: QuestStepId("first_step".to_string()),
+                description: "Complete the first objective.".to_string(),
+                objective: QuestObjective::ReachRoom(RoomId("next_room".to_string())),
+                next_step: None,
+            }],
         };
         let mut quests = HashMap::new();
         quests.insert(quest.id.clone(), quest);
@@ -962,6 +1036,21 @@ mod tests {
             .starts_quests = starts_quests;
     }
 
+    fn start_test_quest(game: &mut Game) -> QuestKey {
+        let key = QuestKey {
+            world_id: WorldId("test_world".to_string()),
+            quest_id: QuestId("test_quest".to_string()),
+        };
+        game.character.quests.insert(
+            key.clone(),
+            QuestProgress {
+                status: QuestStatus::Active,
+                current_step: QuestStepId("first_step".to_string()),
+            },
+        );
+        key
+    }
+
     #[test]
     fn observing_existing_room_returns_event() {
         let game = game_with_character_in("start");
@@ -1036,6 +1125,115 @@ mod tests {
         );
 
         assert_eq!(game.character.current_room, RoomId("start".to_string()));
+    }
+
+    #[test]
+    fn reaching_final_quest_objective_completes_quest() {
+        let mut game = game_with_character_in("start");
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_move(Direction::North);
+
+        assert_eq!(
+            game.character.quests.get(&key),
+            Some(&QuestProgress {
+                status: QuestStatus::Completed,
+                current_step: QuestStepId("first_step".to_string()),
+            })
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::CharacterMoved { .. },
+                GameEvent::RoomObserved { .. },
+                GameEvent::QuestCompleted { quest, .. }
+            ] if quest.key == key && quest.current_objective.is_none()
+        ));
+    }
+
+    #[test]
+    fn reaching_nonfinal_quest_objective_advances_to_next_step() {
+        let mut game = game_with_character_in("start");
+        let quest = game
+            .world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap();
+        quest.steps[0].next_step = Some(QuestStepId("return_step".to_string()));
+        quest.steps.push(QuestStep {
+            id: QuestStepId("return_step".to_string()),
+            description: "Return to the starting room.".to_string(),
+            objective: QuestObjective::ReachRoom(RoomId("start".to_string())),
+            next_step: None,
+        });
+        game.world
+            .room_mut(&RoomId("next_room".to_string()))
+            .unwrap()
+            .exits
+            .insert(Direction::South, RoomId("start".to_string()));
+        let key = start_test_quest(&mut game);
+
+        let advance_events = game.attempt_move(Direction::North);
+        assert_eq!(
+            game.character.quests.get(&key),
+            Some(&QuestProgress {
+                status: QuestStatus::Active,
+                current_step: QuestStepId("return_step".to_string()),
+            })
+        );
+        assert!(matches!(
+            advance_events.last(),
+            Some(GameEvent::QuestAdvanced { quest, .. })
+                if quest.current_objective == Some("Return to the starting room.".to_string())
+        ));
+
+        let completion_events = game.attempt_move(Direction::South);
+        assert!(matches!(
+            completion_events.last(),
+            Some(GameEvent::QuestCompleted { .. })
+        ));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn failed_movement_does_not_advance_quest() {
+        let mut game = game_with_character_in("start");
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_move(Direction::West);
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::MovementFailed { .. }]
+        ));
+        assert_eq!(
+            game.character.quests.get(&key),
+            Some(&QuestProgress {
+                status: QuestStatus::Active,
+                current_step: QuestStepId("first_step".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn completed_quest_is_not_evaluated_again() {
+        let mut game = game_with_character_in("start");
+        let key = start_test_quest(&mut game);
+        game.character.quests.get_mut(&key).unwrap().status = QuestStatus::Completed;
+
+        let events = game.attempt_move(Direction::North);
+
+        assert_eq!(events.len(), 2);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            GameEvent::QuestAdvanced { .. } | GameEvent::QuestCompleted { .. }
+        )));
     }
 
     #[test]
@@ -2146,6 +2344,7 @@ mod tests {
             key.clone(),
             QuestProgress {
                 status: QuestStatus::Completed,
+                current_step: QuestStepId("first_step".to_string()),
             },
         );
 
@@ -2157,6 +2356,7 @@ mod tests {
                     key,
                     name: "Test Quest".to_string(),
                     description: "A quest used for testing.".to_string(),
+                    current_objective: None,
                 }],
             }]
         );
@@ -2184,12 +2384,23 @@ mod tests {
             game.character.quests.get(&key),
             Some(&QuestProgress {
                 status: QuestStatus::Active,
+                current_step: QuestStepId("first_step".to_string()),
             })
         );
         assert!(matches!(
             events.as_slice(),
             [GameEvent::NpcAnswered { .. }, GameEvent::QuestStarted { quest, .. }]
-                if quest.key == key && quest.name == "Test Quest"
+                if quest.key == key
+                    && quest.name == "Test Quest"
+                    && quest.current_objective == Some("Complete the first objective.".to_string())
+        ));
+        assert!(matches!(
+            game.process(Command::Quests).as_slice(),
+            [GameEvent::QuestsObserved { active, completed }]
+                if completed.is_empty()
+                    && active.len() == 1
+                    && active[0].current_objective
+                        == Some("Complete the first objective.".to_string())
         ));
     }
 

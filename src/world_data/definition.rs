@@ -73,6 +73,23 @@ pub struct QuestDefinition {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub starting_step: String,
+    pub steps: Vec<QuestStepDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QuestStepDefinition {
+    pub id: String,
+    pub description: String,
+    pub objective: QuestObjectiveDefinition,
+    #[serde(default)]
+    pub next_step: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum QuestObjectiveDefinition {
+    ReachRoom { room: String },
 }
 
 #[derive(Debug, Deserialize)]

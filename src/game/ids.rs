@@ -32,6 +32,9 @@ pub struct FactKey {
 pub struct QuestId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QuestStepId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QuestKey {
     pub world_id: WorldId,
     pub quest_id: QuestId,

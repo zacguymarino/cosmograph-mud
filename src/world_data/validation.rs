@@ -330,6 +330,110 @@ fn validate_quests(world: &WorldDefinition) -> Result<(), String> {
         if quest.description.trim().is_empty() {
             return Err(format!("Quest '{}' has no description", quest.id));
         }
+
+        if quest.starting_step.trim().is_empty() {
+            return Err(format!("Quest '{}' has no starting step", quest.id));
+        }
+        if !is_valid_id(&quest.starting_step) {
+            return Err(format!(
+                "Starting step for quest '{}' has invalid characters: {}",
+                quest.id, quest.starting_step
+            ));
+        }
+
+        let mut step_ids = HashSet::new();
+        for step in &quest.steps {
+            if step.id.trim().is_empty() {
+                return Err(format!("A step on quest '{}' has no id", quest.id));
+            }
+            if !is_valid_id(&step.id) {
+                return Err(format!(
+                    "Step id on quest '{}' has invalid characters: {}",
+                    quest.id, step.id
+                ));
+            }
+            if !step_ids.insert(&step.id) {
+                return Err(format!(
+                    "Quest '{}' has duplicate step id '{}'",
+                    quest.id, step.id
+                ));
+            }
+            if step.description.trim().is_empty() {
+                return Err(format!(
+                    "Step '{}' on quest '{}' has no description",
+                    step.id, quest.id
+                ));
+            }
+            match &step.objective {
+                super::definition::QuestObjectiveDefinition::ReachRoom { room } => {
+                    if !world.rooms.iter().any(|candidate| &candidate.id == room) {
+                        return Err(format!(
+                            "Step '{}' on quest '{}' references missing room '{}'",
+                            step.id, quest.id, room
+                        ));
+                    }
+                }
+            }
+            if let Some(next_step) = &step.next_step {
+                if next_step.trim().is_empty() {
+                    return Err(format!(
+                        "Step '{}' on quest '{}' has an empty next step",
+                        step.id, quest.id
+                    ));
+                }
+                if !is_valid_id(next_step) {
+                    return Err(format!(
+                        "Next step for '{}' on quest '{}' has invalid characters: {}",
+                        step.id, quest.id, next_step
+                    ));
+                }
+            }
+        }
+
+        if !step_ids.contains(&quest.starting_step) {
+            return Err(format!(
+                "Quest '{}' references missing starting step '{}'",
+                quest.id, quest.starting_step
+            ));
+        }
+
+        for step in &quest.steps {
+            if let Some(next_step) = &step.next_step {
+                if !step_ids.contains(next_step) {
+                    return Err(format!(
+                        "Step '{}' on quest '{}' references missing next step '{}'",
+                        step.id, quest.id, next_step
+                    ));
+                }
+            }
+        }
+
+        let mut reachable = HashSet::new();
+        let mut current = Some(quest.starting_step.as_str());
+        while let Some(step_id) = current {
+            if !reachable.insert(step_id) {
+                return Err(format!(
+                    "Quest '{}' contains a cycle at step '{}'",
+                    quest.id, step_id
+                ));
+            }
+            current = quest
+                .steps
+                .iter()
+                .find(|step| step.id == step_id)
+                .and_then(|step| step.next_step.as_deref());
+        }
+
+        if let Some(unreachable) = quest
+            .steps
+            .iter()
+            .find(|step| !reachable.contains(step.id.as_str()))
+        {
+            return Err(format!(
+                "Step '{}' on quest '{}' is unreachable from the starting step",
+                unreachable.id, quest.id
+            ));
+        }
     }
 
     Ok(())
@@ -508,7 +612,7 @@ mod tests {
     use super::*;
     use crate::world_data::definition::{
         FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition,
-        QuestDefinition, RoomDefinition,
+        QuestDefinition, QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -1197,6 +1301,15 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             description: "A quest used for testing.".to_string(),
+            starting_step: "first_step".to_string(),
+            steps: vec![QuestStepDefinition {
+                id: "first_step".to_string(),
+                description: "Complete the first objective.".to_string(),
+                objective: QuestObjectiveDefinition::ReachRoom {
+                    room: "start".to_string(),
+                },
+                next_step: None,
+            }],
         }
     }
 
@@ -1258,6 +1371,208 @@ mod tests {
         assert_eq!(
             validate_world(&undescribed_world),
             Err("Quest 'test_quest' has no description".to_string())
+        );
+    }
+
+    #[test]
+    fn quest_starting_step_must_not_be_empty() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.starting_step = "  ".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Quest 'test_quest' has no starting step".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_quest_starting_step_id_fails_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.starting_step = "bad!".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Starting step for quest 'test_quest' has invalid characters: bad!".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_quest_step_id_fails_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].id = "  ".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("A step on quest 'test_quest' has no id".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_quest_step_id_fails_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].id = "bad!".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Step id on quest 'test_quest' has invalid characters: bad!".to_string())
+        );
+    }
+
+    #[test]
+    fn duplicate_quest_step_ids_fail_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps.push(QuestStepDefinition {
+            id: "first_step".to_string(),
+            description: "A duplicate step.".to_string(),
+            objective: QuestObjectiveDefinition::ReachRoom {
+                room: "start".to_string(),
+            },
+            next_step: None,
+        });
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Quest 'test_quest' has duplicate step id 'first_step'".to_string())
+        );
+    }
+
+    #[test]
+    fn quest_step_description_must_not_be_empty() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].description = "  ".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Step 'first_step' on quest 'test_quest' has no description".to_string())
+        );
+    }
+
+    #[test]
+    fn quest_starting_step_must_reference_declared_step() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.starting_step = "missing_step".to_string();
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Quest 'test_quest' references missing starting step 'missing_step'".to_string())
+        );
+    }
+
+    #[test]
+    fn reach_room_objective_must_reference_declared_room() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::ReachRoom {
+            room: "missing_room".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Step 'first_step' on quest 'test_quest' references missing room 'missing_room'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn quest_next_step_must_not_be_empty() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].next_step = Some("  ".to_string());
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Step 'first_step' on quest 'test_quest' has an empty next step".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_quest_next_step_id_fails_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].next_step = Some("bad!".to_string());
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Next step for 'first_step' on quest 'test_quest' has invalid characters: bad!"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn quest_next_step_must_reference_declared_step() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].next_step = Some("missing_step".to_string());
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Step 'first_step' on quest 'test_quest' references missing next step 'missing_step'".to_string())
+        );
+    }
+
+    #[test]
+    fn cyclic_quest_steps_fail_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].next_step = Some("second_step".to_string());
+        quest.steps.push(QuestStepDefinition {
+            id: "second_step".to_string(),
+            description: "Complete the second objective.".to_string(),
+            objective: QuestObjectiveDefinition::ReachRoom {
+                room: "start".to_string(),
+            },
+            next_step: Some("first_step".to_string()),
+        });
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Quest 'test_quest' contains a cycle at step 'first_step'".to_string())
+        );
+    }
+
+    #[test]
+    fn unreachable_quest_steps_fail_validation() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps.push(QuestStepDefinition {
+            id: "orphaned_step".to_string(),
+            description: "An unreachable objective.".to_string(),
+            objective: QuestObjectiveDefinition::ReachRoom {
+                room: "start".to_string(),
+            },
+            next_step: None,
+        });
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Step 'orphaned_step' on quest 'test_quest' is unreachable from the starting step"
+                    .to_string()
+            )
         );
     }
 

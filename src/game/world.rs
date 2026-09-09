@@ -53,6 +53,8 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::ids::QuestStepId;
+    use crate::game::quest::{QuestObjective, QuestStep};
     use std::collections::HashMap;
 
     fn valid_room() -> Room {
@@ -218,6 +220,13 @@ mod tests {
             id: QuestId("test_quest".to_string()),
             name: "Test Quest".to_string(),
             description: "A quest used for testing.".to_string(),
+            starting_step: QuestStepId("first_step".to_string()),
+            steps: vec![QuestStep {
+                id: QuestStepId("first_step".to_string()),
+                description: "Complete the first objective.".to_string(),
+                objective: QuestObjective::ReachRoom(RoomId("start".to_string())),
+                next_step: None,
+            }],
         };
         world.quests.insert(quest.id.clone(), quest);
 
@@ -228,5 +237,12 @@ mod tests {
             Some("Test Quest")
         );
         assert!(world.quest(&QuestId("missing".to_string())).is_none());
+        assert_eq!(
+            world
+                .quest(&QuestId("test_quest".to_string()))
+                .and_then(|quest| quest.step(&QuestStepId("first_step".to_string())))
+                .map(|step| step.description.as_str()),
+            Some("Complete the first objective.")
+        );
     }
 }
