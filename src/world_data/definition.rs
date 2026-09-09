@@ -34,7 +34,26 @@ pub struct RoomDefinition {
     #[serde(default)]
     pub npcs: Vec<String>,
 
-    pub exits: HashMap<String, String>,
+    pub exits: HashMap<String, ExitDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ExitDefinition {
+    Simple(String),
+    ItemGated {
+        destination: String,
+        requires_item: String,
+        failure_message: String,
+    },
+}
+
+impl ExitDefinition {
+    pub fn destination(&self) -> &str {
+        match self {
+            Self::Simple(destination) | Self::ItemGated { destination, .. } => destination,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

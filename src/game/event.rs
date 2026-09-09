@@ -119,6 +119,13 @@ pub enum GameEvent {
         direction: Direction,
     },
 
+    MovementBlocked {
+        character_id: CharacterId,
+        room_id: RoomId,
+        direction: Direction,
+        message: String,
+    },
+
     ItemTaken {
         character_id: CharacterId,
         room_id: RoomId,

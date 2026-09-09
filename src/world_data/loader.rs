@@ -20,6 +20,9 @@ pub fn load_world(path: &str) -> Result<World, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::direction::Direction;
+    use crate::game::exit::ExitRequirement;
+    use crate::game::ids::ItemId;
     use crate::game::ids::RoomId;
     use crate::game::ids::{FactId, NpcId, QuestId, QuestStepId};
     use crate::game::quest::QuestObjective;
@@ -90,6 +93,28 @@ mod tests {
         assert_eq!(
             topic.starts_quests,
             vec![QuestId("lights_in_the_old_observatory".to_string())]
+        );
+
+        let forest = world
+            .room(&RoomId("forest_path".to_string()))
+            .expect("Forest Path should exist");
+        let observatory_exit = forest
+            .exits
+            .get(&Direction::East)
+            .expect("Forest Path should lead east to the observatory");
+        assert_eq!(
+            observatory_exit.destination,
+            RoomId("old_observatory".to_string())
+        );
+        assert_eq!(
+            observatory_exit.requirement,
+            Some(ExitRequirement::CarryingItem(ItemId(
+                "rusty_key".to_string()
+            )))
+        );
+        assert_eq!(
+            observatory_exit.failure_message.as_deref(),
+            Some("The observatory door is locked. Its corroded keyhole looks oddly familiar.")
         );
     }
 }

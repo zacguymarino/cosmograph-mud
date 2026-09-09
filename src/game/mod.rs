@@ -2,6 +2,7 @@ pub mod character;
 pub mod command;
 pub mod direction;
 pub mod event;
+pub mod exit;
 pub mod feature;
 pub mod game;
 pub mod ids;

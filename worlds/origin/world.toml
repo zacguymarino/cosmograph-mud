@@ -94,7 +94,7 @@ items = ["forest_rusty_key"]
 
 [rooms.exits]
 south = "origin_plaza"
-east = "old_observatory"
+east = { destination = "old_observatory", requires_item = "rusty_key", failure_message = "The observatory door is locked. Its corroded keyhole looks oddly familiar." }
 
 [[rooms]]
 id = "old_observatory"

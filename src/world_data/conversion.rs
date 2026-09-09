@@ -4,6 +4,7 @@ use super::definition::{
     FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition, RoomDefinition,
 };
 use crate::game::direction::Direction;
+use crate::game::exit::{Exit, ExitRequirement};
 use crate::game::feature::RoomFeature;
 use crate::game::ids::{
     FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestStepId, RoomId, WorldId,
@@ -17,11 +18,26 @@ use crate::world_data::definition::WorldDefinition;
 
 pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
     let mut exits = HashMap::new();
-    for (direction, destination) in definition.exits {
+    for (direction, exit_definition) in definition.exits {
         let direction = Direction::from_str(&direction)
             .ok_or_else(|| format!("unknown direction '{direction}'"))?;
 
-        exits.insert(direction, RoomId(destination));
+        let exit = match exit_definition {
+            super::definition::ExitDefinition::Simple(destination) => {
+                Exit::unrestricted(RoomId(destination))
+            }
+            super::definition::ExitDefinition::ItemGated {
+                destination,
+                requires_item,
+                failure_message,
+            } => Exit {
+                destination: RoomId(destination),
+                requirement: Some(ExitRequirement::CarryingItem(ItemId(requires_item))),
+                failure_message: Some(failure_message),
+            },
+        };
+
+        exits.insert(direction, exit);
     }
     let items = definition.items.into_iter().map(ItemId).collect();
     let features = definition.features.into_iter().map(FeatureId).collect();
@@ -163,14 +179,17 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition,
+        ExitDefinition, FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition,
         QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
     fn valid_room_definition() -> RoomDefinition {
         let mut exits = HashMap::new();
-        exits.insert("north".to_string(), "next_room".to_string());
+        exits.insert(
+            "north".to_string(),
+            ExitDefinition::Simple("next_room".to_string()),
+        );
 
         RoomDefinition {
             id: "start".to_string(),
@@ -314,9 +333,10 @@ mod tests {
     fn invalid_room_prevents_world_conversion() {
         let mut definition = valid_world_definition();
 
-        definition.rooms[0]
-            .exits
-            .insert("sideways".to_string(), "next_room".to_string());
+        definition.rooms[0].exits.insert(
+            "sideways".to_string(),
+            ExitDefinition::Simple("next_room".to_string()),
+        );
 
         let error =
             convert_world(definition).expect_err("world containing an invalid room should fail");
@@ -357,7 +377,9 @@ mod tests {
         assert_eq!(room.name, "Starting Room");
         assert_eq!(room.items, vec![ItemId("test_item".to_string())]);
         assert_eq!(
-            room.exits.get(&Direction::North),
+            room.exits
+                .get(&Direction::North)
+                .map(|exit| &exit.destination),
             Some(&RoomId("next_room".to_string()))
         );
         assert_eq!(room.features, vec![FeatureId("test_feature".to_string())]);
@@ -365,12 +387,38 @@ mod tests {
     }
 
     #[test]
+    fn item_gated_exit_converts_to_typed_runtime_exit() {
+        let mut room_definition = valid_room_definition();
+        room_definition.exits.insert(
+            "east".to_string(),
+            ExitDefinition::ItemGated {
+                destination: "next_room".to_string(),
+                requires_item: "test_item".to_string(),
+                failure_message: "The door is locked.".to_string(),
+            },
+        );
+
+        let room = convert_room(room_definition).expect("valid room should convert");
+        let exit = room.exits.get(&Direction::East).unwrap();
+
+        assert_eq!(exit.destination, RoomId("next_room".to_string()));
+        assert_eq!(
+            exit.requirement,
+            Some(ExitRequirement::CarryingItem(ItemId(
+                "test_item".to_string()
+            )))
+        );
+        assert_eq!(exit.failure_message.as_deref(), Some("The door is locked."));
+    }
+
+    #[test]
     fn invalid_direction_does_not_convert() {
         let mut room_definition = valid_room_definition();
 
-        room_definition
-            .exits
-            .insert("sideways".to_string(), "start".to_string());
+        room_definition.exits.insert(
+            "sideways".to_string(),
+            ExitDefinition::Simple("start".to_string()),
+        );
 
         let error = convert_room(room_definition).expect_err("unknown direction should fail");
 

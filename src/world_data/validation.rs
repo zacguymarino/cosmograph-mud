@@ -33,7 +33,8 @@ fn validate_unique_room_ids(world: &WorldDefinition) -> Result<(), String> {
 
 fn validate_exit_destinations(world: &WorldDefinition) -> Result<(), String> {
     for room in &world.rooms {
-        for (direction, destination) in &room.exits {
+        for (direction, exit) in &room.exits {
+            let destination = exit.destination();
             let target_exists = world
                 .rooms
                 .iter()
@@ -46,6 +47,37 @@ fn validate_exit_destinations(world: &WorldDefinition) -> Result<(), String> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_exit_item_requirements(world: &WorldDefinition) -> Result<(), String> {
+    for room in &world.rooms {
+        for (direction, exit) in &room.exits {
+            let super::definition::ExitDefinition::ItemGated {
+                requires_item,
+                failure_message,
+                ..
+            } = exit
+            else {
+                continue;
+            };
+
+            if !world.items.iter().any(|item| item.id == *requires_item) {
+                return Err(format!(
+                    "Room '{}' has exit '{}' requiring missing item '{}'",
+                    room.id, direction, requires_item
+                ));
+            }
+
+            if failure_message.trim().is_empty() {
+                return Err(format!(
+                    "Room '{}' has exit '{}' with an empty failure message",
+                    room.id, direction
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -622,6 +654,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_unique_room_ids(world)?;
     validate_exit_directions(world)?;
     validate_exit_destinations(world)?;
+    validate_exit_item_requirements(world)?;
     validate_starting_room(world)?;
 
     Ok(())
@@ -631,8 +664,9 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition, NpcTopicDefinition,
-        QuestDefinition, QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
+        ExitDefinition, FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition,
+        NpcTopicDefinition, QuestDefinition, QuestObjectiveDefinition, QuestStepDefinition,
+        RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -714,9 +748,10 @@ mod tests {
     #[test]
     fn missing_exit_destination_fails_validation() {
         let mut world = valid_world();
-        world.rooms[0]
-            .exits
-            .insert("north".to_string(), "missing_room".to_string());
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::Simple("missing_room".to_string()),
+        );
 
         let result = validate_world(&world);
 
@@ -766,9 +801,10 @@ mod tests {
     #[test]
     fn unknown_direction_fails_validation() {
         let mut world = valid_world();
-        world.rooms[0]
-            .exits
-            .insert("sideways".to_string(), "start".to_string());
+        world.rooms[0].exits.insert(
+            "sideways".to_string(),
+            ExitDefinition::Simple("start".to_string()),
+        );
 
         let result = validate_world(&world);
 
@@ -1704,6 +1740,67 @@ mod tests {
                 "Topic 'secret' on NPC 'test_npc' both requires and excludes fact 'known_fact'"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn item_gated_exit_must_reference_declared_item() {
+        let mut world = valid_world();
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::ItemGated {
+                destination: "start".to_string(),
+                requires_item: "missing_key".to_string(),
+                failure_message: "The door is locked.".to_string(),
+            },
+        );
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Room 'start' has exit 'north' requiring missing item 'missing_key'".to_string())
+        );
+    }
+
+    #[test]
+    fn item_gated_exit_with_declared_item_passes_validation() {
+        let mut world = valid_world();
+        world.items.push(ItemDefinition {
+            id: "test_key".to_string(),
+            name: "Test Key".to_string(),
+            description: "A key used for testing.".to_string(),
+        });
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::ItemGated {
+                destination: "start".to_string(),
+                requires_item: "test_key".to_string(),
+                failure_message: "The door is locked.".to_string(),
+            },
+        );
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn item_gated_exit_requires_nonempty_failure_message() {
+        let mut world = valid_world();
+        world.items.push(ItemDefinition {
+            id: "test_key".to_string(),
+            name: "Test Key".to_string(),
+            description: "A key used for testing.".to_string(),
+        });
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::ItemGated {
+                destination: "start".to_string(),
+                requires_item: "test_key".to_string(),
+                failure_message: "  ".to_string(),
+            },
+        );
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Room 'start' has exit 'north' with an empty failure message".to_string())
         );
     }
 }

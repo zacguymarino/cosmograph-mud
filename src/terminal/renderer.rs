@@ -118,6 +118,8 @@ pub fn render_event(event: &GameEvent) -> String {
             format!("You cannot go {}.", direction_name(direction))
         }
 
+        GameEvent::MovementBlocked { message, .. } => message.clone(),
+
         GameEvent::ItemTaken { item, .. } => {
             format!("You take {}.", item.name)
         }
@@ -528,6 +530,18 @@ mod tests {
         };
 
         assert_eq!(render_event(&event), "You cannot go east.");
+    }
+
+    #[test]
+    fn blocked_movement_renders_authored_message() {
+        let event = GameEvent::MovementBlocked {
+            character_id: CharacterId("player".to_string()),
+            room_id: RoomId("start".to_string()),
+            direction: Direction::East,
+            message: "The iron gate is locked.".to_string(),
+        };
+
+        assert_eq!(render_event(&event), "The iron gate is locked.");
     }
 
     #[test]

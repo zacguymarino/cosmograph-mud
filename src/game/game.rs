@@ -6,6 +6,7 @@ use super::event::{
     ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, ObservedQuest,
     TakeFailureReason, TalkFailureReason,
 };
+use super::exit::ExitRequirement;
 use super::ids::{FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestKey};
 use super::naming::normalize_name;
 use super::npc::NpcTopic;
@@ -232,14 +233,34 @@ impl Game {
             }];
         };
 
-        let destination = room.exits.get(&direction).cloned();
-        let Some(destination) = destination else {
+        let exit = room.exits.get(&direction).cloned();
+        let Some(exit) = exit else {
             return vec![GameEvent::MovementFailed {
                 character_id: self.character.id.clone(),
                 room_id: current_room,
                 direction,
             }];
         };
+
+        let requirement_met = match &exit.requirement {
+            None => true,
+            Some(ExitRequirement::CarryingItem(item_id)) => {
+                self.character.inventory.contains(item_id)
+            }
+        };
+
+        if !requirement_met {
+            return vec![GameEvent::MovementBlocked {
+                character_id: self.character.id.clone(),
+                room_id: current_room,
+                direction,
+                message: exit
+                    .failure_message
+                    .unwrap_or_else(|| "You cannot pass that way.".to_string()),
+            }];
+        }
+
+        let destination = exit.destination;
 
         self.character.current_room = destination.clone();
 
@@ -908,6 +929,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::exit::Exit;
     use crate::game::feature::RoomFeature;
     use crate::game::ids::{
         CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestKey,
@@ -922,7 +944,10 @@ mod tests {
 
     fn game_with_character_in(current_room: &str) -> Game {
         let mut start_exits = HashMap::new();
-        start_exits.insert(Direction::North, RoomId("next_room".to_string()));
+        start_exits.insert(
+            Direction::North,
+            Exit::unrestricted(RoomId("next_room".to_string())),
+        );
 
         let room = Room {
             id: RoomId("start".to_string()),
@@ -1169,6 +1194,73 @@ mod tests {
     }
 
     #[test]
+    fn item_gated_exit_blocks_character_without_required_item() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .exits
+            .insert(
+                Direction::North,
+                Exit {
+                    destination: RoomId("next_room".to_string()),
+                    requirement: Some(ExitRequirement::CarryingItem(ItemId(
+                        "test_item".to_string(),
+                    ))),
+                    failure_message: Some("The test door is locked.".to_string()),
+                },
+            );
+
+        let events = game.attempt_move(Direction::North);
+
+        assert_eq!(
+            events,
+            vec![GameEvent::MovementBlocked {
+                character_id: CharacterId("player".to_string()),
+                room_id: RoomId("start".to_string()),
+                direction: Direction::North,
+                message: "The test door is locked.".to_string(),
+            }]
+        );
+        assert_eq!(game.character.current_room, RoomId("start".to_string()));
+    }
+
+    #[test]
+    fn item_gated_exit_allows_character_carrying_required_item() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .exits
+            .insert(
+                Direction::North,
+                Exit {
+                    destination: RoomId("next_room".to_string()),
+                    requirement: Some(ExitRequirement::CarryingItem(ItemId(
+                        "test_item".to_string(),
+                    ))),
+                    failure_message: Some("The test door is locked.".to_string()),
+                },
+            );
+        game.character
+            .inventory
+            .push(ItemId("test_item".to_string()));
+
+        let events = game.attempt_move(Direction::North);
+
+        assert!(matches!(
+            events.first(),
+            Some(GameEvent::CharacterMoved { to, .. })
+                if to == &RoomId("next_room".to_string())
+        ));
+        assert_eq!(game.character.current_room, RoomId("next_room".to_string()));
+        assert_eq!(
+            game.character.inventory,
+            vec![ItemId("test_item".to_string())]
+        );
+    }
+
+    #[test]
     fn reaching_final_quest_objective_completes_quest() {
         let mut game = game_with_character_in("start");
         let key = start_test_quest(&mut game);
@@ -1211,7 +1303,10 @@ mod tests {
             .room_mut(&RoomId("next_room".to_string()))
             .unwrap()
             .exits
-            .insert(Direction::South, RoomId("start".to_string()));
+            .insert(
+                Direction::South,
+                Exit::unrestricted(RoomId("start".to_string())),
+            );
         let key = start_test_quest(&mut game);
 
         let advance_events = game.attempt_move(Direction::North);
@@ -2541,7 +2636,10 @@ mod tests {
             .room_mut(&RoomId("next_room".to_string()))
             .unwrap()
             .exits
-            .insert(Direction::South, RoomId("start".to_string()));
+            .insert(
+                Direction::South,
+                Exit::unrestricted(RoomId("start".to_string())),
+            );
         let key = start_test_quest(&mut game);
 
         assert!(matches!(
