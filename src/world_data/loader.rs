@@ -77,6 +77,16 @@ mod tests {
                 "old_observatory".to_string()
             )))
         );
+        let report_step = quest
+            .step(&QuestStepId("report_to_mara".to_string()))
+            .expect("report step should exist");
+        assert_eq!(
+            report_step.objective,
+            QuestObjective::AskTopic {
+                npc_id: NpcId("mara_voss".to_string()),
+                topic_id: crate::game::ids::NpcTopicId("old_observatory".to_string()),
+            }
+        );
         assert_eq!(
             topic.starts_quests,
             vec![QuestId("lights_in_the_old_observatory".to_string())]

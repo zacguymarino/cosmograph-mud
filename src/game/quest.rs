@@ -1,8 +1,9 @@
-use super::ids::{QuestId, QuestStepId, RoomId};
+use super::ids::{NpcId, NpcTopicId, QuestId, QuestStepId, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuestObjective {
     ReachRoom(RoomId),
+    AskTopic { npc_id: NpcId, topic_id: NpcTopicId },
 }
 
 #[derive(Debug, Clone)]

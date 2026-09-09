@@ -15,6 +15,12 @@ starting_step = "reach_old_observatory"
 id = "reach_old_observatory"
 description = "Find the old observatory."
 objective = { type = "reach_room", room = "old_observatory" }
+next_step = "report_to_mara"
+
+[[quests.steps]]
+id = "report_to_mara"
+description = "Return to Mara Voss and ask her about the old observatory."
+objective = { type = "ask_topic", npc = "mara_voss", topic = "old_observatory" }
 
 [[items]]
 id = "rusty_key"

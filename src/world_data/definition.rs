@@ -90,6 +90,7 @@ pub struct QuestStepDefinition {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum QuestObjectiveDefinition {
     ReachRoom { room: String },
+    AskTopic { npc: String, topic: String },
 }
 
 #[derive(Debug, Deserialize)]

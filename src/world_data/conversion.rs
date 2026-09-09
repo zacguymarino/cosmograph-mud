@@ -63,6 +63,13 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
                             super::definition::QuestObjectiveDefinition::ReachRoom { room } => {
                                 QuestObjective::ReachRoom(RoomId(room))
                             }
+                            super::definition::QuestObjectiveDefinition::AskTopic {
+                                npc,
+                                topic,
+                            } => QuestObjective::AskTopic {
+                                npc_id: NpcId(npc),
+                                topic_id: NpcTopicId(topic),
+                            },
                         },
                         next_step: step.next_step.map(QuestStepId),
                     })
@@ -315,6 +322,30 @@ mod tests {
             convert_world(definition).expect_err("world containing an invalid room should fail");
 
         assert_eq!(error, "unknown direction 'sideways'");
+    }
+
+    #[test]
+    fn ask_topic_objective_converts_to_typed_npc_and_topic_ids() {
+        let mut definition = valid_world_definition();
+        definition.quests[0].steps[0].objective = QuestObjectiveDefinition::AskTopic {
+            npc: "test_npc".to_string(),
+            topic: "test_topic".to_string(),
+        };
+
+        let world = convert_world(definition).expect("valid world should convert");
+        let objective = &world
+            .quest(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective;
+
+        assert_eq!(
+            objective,
+            &QuestObjective::AskTopic {
+                npc_id: NpcId("test_npc".to_string()),
+                topic_id: NpcTopicId("test_topic".to_string()),
+            }
+        );
     }
 
     #[test]

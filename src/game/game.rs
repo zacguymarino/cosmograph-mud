@@ -6,7 +6,7 @@ use super::event::{
     ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, ObservedQuest,
     TakeFailureReason, TalkFailureReason,
 };
-use super::ids::{FactKey, FeatureId, ItemId, NpcId, QuestKey};
+use super::ids::{FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestKey};
 use super::naming::normalize_name;
 use super::npc::NpcTopic;
 use super::quest::{QuestObjective, QuestProgress, QuestStatus};
@@ -71,29 +71,25 @@ impl Game {
         })
     }
 
-    fn update_quests_for_room(&mut self, room_id: &super::ids::RoomId) -> Vec<GameEvent> {
-        let mut transitions = self
-            .character
-            .quests
-            .iter()
-            .filter_map(|(key, progress)| {
-                if key.world_id != self.world.id || progress.status != QuestStatus::Active {
-                    return None;
-                }
-                let quest = self.world.quest(&key.quest_id)?;
-                let step = quest.step(&progress.current_step)?;
-                match &step.objective {
-                    QuestObjective::ReachRoom(target) if target == room_id => {
-                        Some((key.clone(), step.next_step.clone()))
-                    }
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
-        transitions.sort_by(|left, right| (left.0.quest_id.0).cmp(&right.0.quest_id.0));
+    fn apply_quest_transitions(&mut self, mut quest_keys: Vec<QuestKey>) -> Vec<GameEvent> {
+        quest_keys.sort_by(|left, right| left.quest_id.0.cmp(&right.quest_id.0));
 
         let mut events = Vec::new();
-        for (key, next_step) in transitions {
+        for key in quest_keys {
+            let Some(next_step) = self
+                .character
+                .quests
+                .get(&key)
+                .and_then(|progress| {
+                    self.world
+                        .quest(&key.quest_id)?
+                        .step(&progress.current_step)
+                })
+                .map(|step| step.next_step.clone())
+            else {
+                continue;
+            };
+
             let Some(progress) = self.character.quests.get_mut(&key) else {
                 continue;
             };
@@ -118,6 +114,49 @@ impl Game {
         }
 
         events
+    }
+
+    fn update_quests_for_room(&mut self, room_id: &super::ids::RoomId) -> Vec<GameEvent> {
+        let quest_keys = self
+            .character
+            .quests
+            .iter()
+            .filter_map(|(key, progress)| {
+                if key.world_id != self.world.id || progress.status != QuestStatus::Active {
+                    return None;
+                }
+                let quest = self.world.quest(&key.quest_id)?;
+                let step = quest.step(&progress.current_step)?;
+                match &step.objective {
+                    QuestObjective::ReachRoom(target) if target == room_id => Some(key.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.apply_quest_transitions(quest_keys)
+    }
+
+    fn update_quests_for_topic(&mut self, npc_id: &NpcId, topic_id: &NpcTopicId) -> Vec<GameEvent> {
+        let quest_keys = self
+            .character
+            .quests
+            .iter()
+            .filter_map(|(key, progress)| {
+                if key.world_id != self.world.id || progress.status != QuestStatus::Active {
+                    return None;
+                }
+                let quest = self.world.quest(&key.quest_id)?;
+                let step = quest.step(&progress.current_step)?;
+                match &step.objective {
+                    QuestObjective::AskTopic {
+                        npc_id: target_npc,
+                        topic_id: target_topic,
+                    } if target_npc == npc_id && target_topic == topic_id => Some(key.clone()),
+                    _ => None,
+                }
+            })
+            .collect();
+        self.apply_quest_transitions(quest_keys)
     }
 
     fn observe_current_room(&self) -> Option<GameEvent> {
@@ -668,7 +707,7 @@ impl Game {
 
         let mut events = vec![GameEvent::NpcAnswered {
             character_id: self.character.id.clone(),
-            npc_id,
+            npc_id: npc_id.clone(),
             npc_name,
             topic_id: topic.id.clone(),
             topic_name: topic.name.clone(),
@@ -708,6 +747,8 @@ impl Game {
                 },
             });
         }
+
+        events.extend(self.update_quests_for_topic(&npc_id, &topic.id));
 
         events
     }
@@ -2402,6 +2443,158 @@ mod tests {
                     && active[0].current_objective
                         == Some("Complete the first objective.".to_string())
         ));
+    }
+
+    #[test]
+    fn asking_matching_topic_completes_active_dialogue_objective() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::AskTopic {
+            npc_id: NpcId("test_npc".to_string()),
+            topic_id: NpcTopicId("test_topic".to_string()),
+        };
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::NpcAnswered { .. },
+                GameEvent::QuestCompleted { .. }
+            ]
+        ));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn same_dialogue_can_start_and_immediately_complete_quest() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::AskTopic {
+            npc_id: NpcId("test_npc".to_string()),
+            topic_id: NpcTopicId("test_topic".to_string()),
+        };
+        set_topic_starts_quests(
+            &mut game,
+            "test_topic",
+            vec![QuestId("test_quest".to_string())],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::NpcAnswered { .. },
+                GameEvent::QuestStarted { .. },
+                GameEvent::QuestCompleted { .. }
+            ]
+        ));
+        assert!(
+            game.character
+                .quests
+                .values()
+                .all(|progress| progress.status == QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn location_step_can_advance_to_dialogue_step() {
+        let mut game = game_with_character_in("start");
+        let quest = game
+            .world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap();
+        quest.steps[0].next_step = Some(QuestStepId("report_step".to_string()));
+        quest.steps.push(QuestStep {
+            id: QuestStepId("report_step".to_string()),
+            description: "Report back to the test NPC.".to_string(),
+            objective: QuestObjective::AskTopic {
+                npc_id: NpcId("test_npc".to_string()),
+                topic_id: NpcTopicId("test_topic".to_string()),
+            },
+            next_step: None,
+        });
+        game.world
+            .room_mut(&RoomId("next_room".to_string()))
+            .unwrap()
+            .exits
+            .insert(Direction::South, RoomId("start".to_string()));
+        let key = start_test_quest(&mut game);
+
+        assert!(matches!(
+            game.attempt_move(Direction::North).last(),
+            Some(GameEvent::QuestAdvanced { quest, .. })
+                if quest.current_objective == Some("Report back to the test NPC.".to_string())
+        ));
+        game.attempt_move(Direction::South);
+        assert!(matches!(
+            game.attempt_ask(AskQuery {
+                npc: TargetQuery::npc("test npc".to_string()),
+                topic: "test topic".to_string(),
+            })
+            .last(),
+            Some(GameEvent::QuestCompleted { .. })
+        ));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn nonmatching_topic_does_not_advance_dialogue_objective() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::AskTopic {
+            npc_id: NpcId("test_npc".to_string()),
+            topic_id: NpcTopicId("test_topic".to_string()),
+        };
+        add_conditional_topic(&mut game, vec![], vec![]);
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "secret topic".to_string(),
+        });
+
+        assert!(matches!(events.as_slice(), [GameEvent::NpcAnswered { .. }]));
+        assert_eq!(
+            game.character.quests.get(&key),
+            Some(&QuestProgress {
+                status: QuestStatus::Active,
+                current_step: QuestStepId("first_step".to_string()),
+            })
+        );
     }
 
     #[test]

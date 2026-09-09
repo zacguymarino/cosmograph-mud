@@ -373,6 +373,26 @@ fn validate_quests(world: &WorldDefinition) -> Result<(), String> {
                         ));
                     }
                 }
+                super::definition::QuestObjectiveDefinition::AskTopic { npc, topic } => {
+                    let Some(npc_definition) =
+                        world.npcs.iter().find(|candidate| &candidate.id == npc)
+                    else {
+                        return Err(format!(
+                            "Step '{}' on quest '{}' references missing NPC '{}'",
+                            step.id, quest.id, npc
+                        ));
+                    };
+                    if !npc_definition
+                        .topics
+                        .iter()
+                        .any(|candidate| &candidate.id == topic)
+                    {
+                        return Err(format!(
+                            "Step '{}' on quest '{}' references missing topic '{}' on NPC '{}'",
+                            step.id, quest.id, topic, npc
+                        ));
+                    }
+                }
             }
             if let Some(next_step) = &step.next_step {
                 if next_step.trim().is_empty() {
@@ -1487,6 +1507,58 @@ mod tests {
                 "Step 'first_step' on quest 'test_quest' references missing room 'missing_room'"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn valid_ask_topic_objective_passes_validation() {
+        let mut world = valid_world();
+        let mut npc = test_npc("test_npc", "Test NPC");
+        npc.topics.push(test_topic("test_topic", "Test Topic"));
+        world.npcs.push(npc);
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::AskTopic {
+            npc: "test_npc".to_string(),
+            topic: "test_topic".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn ask_topic_objective_must_reference_declared_npc() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::AskTopic {
+            npc: "missing_npc".to_string(),
+            topic: "test_topic".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Step 'first_step' on quest 'test_quest' references missing NPC 'missing_npc'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn ask_topic_objective_must_reference_topic_on_selected_npc() {
+        let mut world = valid_world();
+        world.npcs.push(test_npc("test_npc", "Test NPC"));
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::AskTopic {
+            npc: "test_npc".to_string(),
+            topic: "missing_topic".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Step 'first_step' on quest 'test_quest' references missing topic 'missing_topic' on NPC 'test_npc'".to_string())
         );
     }
 
