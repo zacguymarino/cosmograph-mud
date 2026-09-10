@@ -79,6 +79,9 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
                             super::definition::QuestObjectiveDefinition::ReachRoom { room } => {
                                 QuestObjective::ReachRoom(RoomId(room))
                             }
+                            super::definition::QuestObjectiveDefinition::PossessItem { item } => {
+                                QuestObjective::PossessItem(ItemId(item))
+                            }
                             super::definition::QuestObjectiveDefinition::AskTopic {
                                 npc,
                                 topic,
@@ -365,6 +368,26 @@ mod tests {
                 npc_id: NpcId("test_npc".to_string()),
                 topic_id: NpcTopicId("test_topic".to_string()),
             }
+        );
+    }
+
+    #[test]
+    fn possess_item_objective_converts_to_typed_item_id() {
+        let mut definition = valid_world_definition();
+        definition.quests[0].steps[0].objective = QuestObjectiveDefinition::PossessItem {
+            item: "test_item".to_string(),
+        };
+
+        let world = convert_world(definition).expect("valid world should convert");
+        let objective = &world
+            .quest(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective;
+
+        assert_eq!(
+            objective,
+            &QuestObjective::PossessItem(ItemId("test_item".to_string()))
         );
     }
 

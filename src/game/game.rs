@@ -117,24 +117,40 @@ impl Game {
         events
     }
 
-    fn update_quests_for_room(&mut self, room_id: &super::ids::RoomId) -> Vec<GameEvent> {
-        let quest_keys = self
-            .character
-            .quests
-            .iter()
-            .filter_map(|(key, progress)| {
-                if key.world_id != self.world.id || progress.status != QuestStatus::Active {
-                    return None;
-                }
-                let quest = self.world.quest(&key.quest_id)?;
-                let step = quest.step(&progress.current_step)?;
-                match &step.objective {
-                    QuestObjective::ReachRoom(target) if target == room_id => Some(key.clone()),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
-        self.apply_quest_transitions(quest_keys)
+    fn settle_state_based_quest_objectives(&mut self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        loop {
+            let quest_keys = self
+                .character
+                .quests
+                .iter()
+                .filter_map(|(key, progress)| {
+                    if key.world_id != self.world.id || progress.status != QuestStatus::Active {
+                        return None;
+                    }
+                    let quest = self.world.quest(&key.quest_id)?;
+                    let step = quest.step(&progress.current_step)?;
+                    let satisfied = match &step.objective {
+                        QuestObjective::ReachRoom(room_id) => {
+                            room_id == &self.character.current_room
+                        }
+                        QuestObjective::PossessItem(item_id) => {
+                            self.character.inventory.contains(item_id)
+                        }
+                        QuestObjective::AskTopic { .. } => false,
+                    };
+                    satisfied.then(|| key.clone())
+                })
+                .collect::<Vec<_>>();
+
+            if quest_keys.is_empty() {
+                break;
+            }
+            events.extend(self.apply_quest_transitions(quest_keys));
+        }
+
+        events
     }
 
     fn update_quests_for_topic(&mut self, npc_id: &NpcId, topic_id: &NpcTopicId) -> Vec<GameEvent> {
@@ -264,7 +280,7 @@ impl Game {
 
         self.character.current_room = destination.clone();
 
-        let quest_events = self.update_quests_for_room(&destination);
+        let quest_events = self.settle_state_based_quest_objectives();
 
         let movement_event = GameEvent::CharacterMoved {
             character_id: self.character.id.clone(),
@@ -386,11 +402,13 @@ impl Game {
         room.items.remove(position);
         self.character.inventory.push(item_id);
 
-        vec![GameEvent::ItemTaken {
+        let mut events = vec![GameEvent::ItemTaken {
             character_id: self.character.id.clone(),
             room_id,
             item: observed_item,
-        }]
+        }];
+        events.extend(self.settle_state_based_quest_objectives());
+        events
     }
 
     fn observe_inventory(&self) -> Option<GameEvent> {
@@ -769,7 +787,9 @@ impl Game {
             });
         }
 
+        events.extend(self.settle_state_based_quest_objectives());
         events.extend(self.update_quests_for_topic(&npc_id, &topic.id));
+        events.extend(self.settle_state_based_quest_objectives());
 
         events
     }
@@ -1465,6 +1485,94 @@ mod tests {
                 .expect("starting room should exist")
                 .items
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn taking_required_item_completes_possession_objective() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::PossessItem(ItemId("test_item".to_string()));
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_take("test item".to_string());
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::ItemTaken { .. },
+                GameEvent::QuestCompleted { .. }
+            ]
+        ));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn failed_take_does_not_complete_possession_objective() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::PossessItem(ItemId("test_item".to_string()));
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_take("missing item".to_string());
+
+        assert!(matches!(events.as_slice(), [GameEvent::TakeFailed { .. }]));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Active)
+        );
+    }
+
+    #[test]
+    fn taking_unrelated_item_does_not_complete_possession_objective() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::PossessItem(ItemId("test_item".to_string()));
+        let other_item = Item {
+            id: ItemId("other_item".to_string()),
+            name: "Other Item".to_string(),
+            description: "An unrelated item.".to_string(),
+        };
+        game.world
+            .items
+            .insert(other_item.id.clone(), other_item.clone());
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .items
+            .push(other_item.id);
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_take("other item".to_string());
+
+        assert!(matches!(events.as_slice(), [GameEvent::ItemTaken { .. }]));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Active)
         );
     }
 
@@ -2611,6 +2719,85 @@ mod tests {
                 .quests
                 .values()
                 .all(|progress| progress.status == QuestStatus::Completed)
+        );
+    }
+
+    #[test]
+    fn starting_quest_recognizes_item_already_in_inventory() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap()
+            .steps[0]
+            .objective = QuestObjective::PossessItem(ItemId("test_item".to_string()));
+        game.character
+            .inventory
+            .push(ItemId("test_item".to_string()));
+        set_topic_starts_quests(
+            &mut game,
+            "test_topic",
+            vec![QuestId("test_quest".to_string())],
+        );
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::NpcAnswered { .. },
+                GameEvent::QuestStarted { .. },
+                GameEvent::QuestCompleted { .. }
+            ]
+        ));
+    }
+
+    #[test]
+    fn dialogue_transition_continues_through_satisfied_possession_step() {
+        let mut game = game_with_character_in("start");
+        let quest = game
+            .world
+            .quests
+            .get_mut(&QuestId("test_quest".to_string()))
+            .unwrap();
+        quest.steps[0].objective = QuestObjective::AskTopic {
+            npc_id: NpcId("test_npc".to_string()),
+            topic_id: NpcTopicId("test_topic".to_string()),
+        };
+        quest.steps[0].next_step = Some(QuestStepId("possess_step".to_string()));
+        quest.steps.push(QuestStep {
+            id: QuestStepId("possess_step".to_string()),
+            description: "Possess the test item.".to_string(),
+            objective: QuestObjective::PossessItem(ItemId("test_item".to_string())),
+            next_step: None,
+        });
+        game.character
+            .inventory
+            .push(ItemId("test_item".to_string()));
+        let key = start_test_quest(&mut game);
+
+        let events = game.attempt_ask(AskQuery {
+            npc: TargetQuery::npc("test npc".to_string()),
+            topic: "test topic".to_string(),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                GameEvent::NpcAnswered { .. },
+                GameEvent::QuestAdvanced { .. },
+                GameEvent::QuestCompleted { .. }
+            ]
+        ));
+        assert_eq!(
+            game.character
+                .quests
+                .get(&key)
+                .map(|progress| progress.status),
+            Some(QuestStatus::Completed)
         );
     }
 

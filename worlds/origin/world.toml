@@ -9,7 +9,13 @@ id = "heard_about_old_observatory"
 id = "lights_in_the_old_observatory"
 name = "Lights in the Old Observatory"
 description = "Investigate the strange lights reported near the abandoned observatory."
-starting_step = "reach_old_observatory"
+starting_step = "obtain_rusty_key"
+
+[[quests.steps]]
+id = "obtain_rusty_key"
+description = "Obtain the rusty key from Origin Plaza."
+objective = { type = "possess_item", item = "rusty_key" }
+next_step = "reach_old_observatory"
 
 [[quests.steps]]
 id = "reach_old_observatory"

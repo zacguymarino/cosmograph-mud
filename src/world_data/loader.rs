@@ -64,7 +64,15 @@ mod tests {
         assert_eq!(quest.name, "Lights in the Old Observatory");
         assert_eq!(
             quest.starting_step,
-            QuestStepId("reach_old_observatory".to_string())
+            QuestStepId("obtain_rusty_key".to_string())
+        );
+        assert_eq!(
+            quest
+                .step(&QuestStepId("obtain_rusty_key".to_string()))
+                .map(|step| &step.objective),
+            Some(&QuestObjective::PossessItem(ItemId(
+                "rusty_key".to_string()
+            )))
         );
         assert_eq!(
             quest

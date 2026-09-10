@@ -405,6 +405,14 @@ fn validate_quests(world: &WorldDefinition) -> Result<(), String> {
                         ));
                     }
                 }
+                super::definition::QuestObjectiveDefinition::PossessItem { item } => {
+                    if !world.items.iter().any(|candidate| &candidate.id == item) {
+                        return Err(format!(
+                            "Step '{}' on quest '{}' references missing item '{}'",
+                            step.id, quest.id, item
+                        ));
+                    }
+                }
                 super::definition::QuestObjectiveDefinition::AskTopic { npc, topic } => {
                     let Some(npc_definition) =
                         world.npcs.iter().find(|candidate| &candidate.id == npc)
@@ -1541,6 +1549,41 @@ mod tests {
             validate_world(&world),
             Err(
                 "Step 'first_step' on quest 'test_quest' references missing room 'missing_room'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn valid_possess_item_objective_passes_validation() {
+        let mut world = valid_world();
+        world.items.push(ItemDefinition {
+            id: "test_item".to_string(),
+            name: "Test Item".to_string(),
+            description: "An item used for testing.".to_string(),
+        });
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::PossessItem {
+            item: "test_item".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn possess_item_objective_must_reference_declared_item() {
+        let mut world = valid_world();
+        let mut quest = test_quest("test_quest", "Test Quest");
+        quest.steps[0].objective = QuestObjectiveDefinition::PossessItem {
+            item: "missing_item".to_string(),
+        };
+        world.quests.push(quest);
+
+        assert_eq!(
+            validate_world(&world),
+            Err(
+                "Step 'first_step' on quest 'test_quest' references missing item 'missing_item'"
                     .to_string()
             )
         );
