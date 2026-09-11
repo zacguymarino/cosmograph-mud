@@ -1,4 +1,4 @@
-use crate::game::command::{AskQuery, Command, TargetKind, TargetQuery};
+use crate::game::command::{AskQuery, Command, PutOnQuery, TargetKind, TargetQuery};
 use crate::game::direction::Direction;
 use crate::game::naming::normalize_name;
 use std::num::NonZeroUsize;
@@ -92,6 +92,15 @@ fn parse_ask_query(query: &str) -> Result<Command, String> {
     }))
 }
 
+fn parse_put_query(query: &str) -> Result<Command, String> {
+    let Some((item, feature)) = query.split_once(" on ") else {
+        return Err("put what on what?".to_string());
+    };
+    let item = parse_target_query(item, Some(TargetKind::Item), false, "put what?")?;
+    let feature = parse_target_query(feature, Some(TargetKind::Feature), false, "put it on what?")?;
+    Ok(Command::PutOn(PutOnQuery { item, feature }))
+}
+
 pub fn parse_command(input: &str) -> Result<Command, String> {
     let normalized = normalize_name(input);
 
@@ -144,6 +153,13 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
 
             parse_target_query(&query, Some(TargetKind::Item), false, "drop what?")
                 .map(Command::Drop)
+        }
+        "put" => Err("put what on what?".to_string()),
+        command if command.starts_with("put ") => {
+            let query = command
+                .strip_prefix("put ")
+                .expect("put prefix was already checked");
+            parse_put_query(query)
         }
         "talk" | "talk to" => Err("talk to whom?".to_string()),
         command if command.starts_with("talk to ") => {
@@ -495,6 +511,27 @@ mod tests {
         assert_eq!(
             parse_command("take 0 rusty key"),
             Err("target number must be at least 1".to_string())
+        );
+    }
+
+    #[test]
+    fn put_on_input_returns_item_and_feature_queries() {
+        assert_eq!(
+            parse_command("put 2 rusty key on 1 brass hook"),
+            Ok(Command::PutOn(PutOnQuery {
+                item: TargetQuery::item("rusty key".to_string())
+                    .with_ordinal(NonZeroUsize::new(2).unwrap()),
+                feature: TargetQuery::feature("brass hook".to_string())
+                    .with_ordinal(NonZeroUsize::new(1).unwrap()),
+            }))
+        );
+    }
+
+    #[test]
+    fn incomplete_put_on_input_is_rejected() {
+        assert_eq!(
+            parse_command("put cloak"),
+            Err("put what on what?".to_string())
         );
     }
 }

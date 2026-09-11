@@ -1,10 +1,11 @@
-use super::ids::{CharacterId, ItemId, RoomId};
+use super::ids::{CharacterId, FeatureId, ItemId, RoomId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemLocation {
     Nowhere,
     Room(RoomId),
     CarriedBy(CharacterId),
+    OnFeature(FeatureId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

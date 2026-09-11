@@ -2,7 +2,7 @@ use crate::game::command::TargetKind;
 use crate::game::direction::Direction;
 use crate::game::event::{
     AskFailureReason, DropFailureReason, ExamineFailureReason, GameEvent, ObservedQuest,
-    TakeFailureReason, TalkFailureReason,
+    PutOnFailureReason, TakeFailureReason, TalkFailureReason,
 };
 
 fn direction_name(direction: &Direction) -> &'static str {
@@ -54,9 +54,24 @@ pub fn render_event(event: &GameEvent) -> String {
                 item_names.join(", ")
             };
 
-            let feature_descriptions: Vec<&str> = features
+            let feature_descriptions: Vec<String> = features
                 .iter()
-                .map(|feature| feature.room_description.as_str())
+                .flat_map(|feature| {
+                    let mut lines = vec![feature.room_description.clone()];
+                    if !feature.items.is_empty() {
+                        lines.push(format!(
+                            "On {}: {}",
+                            feature.name,
+                            feature
+                                .items
+                                .iter()
+                                .map(|item| item.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                    lines
+                })
                 .collect();
 
             let feature_paragraph = if feature_descriptions.is_empty() {
@@ -101,6 +116,7 @@ pub fn render_event(event: &GameEvent) -> String {
             "  exits",
             "  take (get) <item>",
             "  drop <item>",
+            "  put <item> on <feature>",
             "  inventory (inv, i)",
             "  quests (journal)",
             "  talk to <npc>",
@@ -222,6 +238,84 @@ pub fn render_event(event: &GameEvent) -> String {
             format!("You drop {}.", item.name)
         }
 
+        GameEvent::ItemPlacedOnFeature {
+            item, feature_name, ..
+        } => format!("You put {} on {}.", item.name, feature_name),
+
+        GameEvent::PutOnFailed {
+            item_query,
+            reason: PutOnFailureReason::ItemNotFound,
+            ..
+        } => format!("You are not carrying '{item_query}'."),
+
+        GameEvent::PutOnFailed {
+            item_query,
+            feature_query,
+            reason: PutOnFailureReason::ItemAmbiguous { match_count },
+            ..
+        } => {
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {item_query} (item)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one carried item matches '{item_query}':\n{choices}\nTry 'put 1 {item_query} on {feature_query}' or another listed number."
+            )
+        }
+
+        GameEvent::PutOnFailed {
+            item_query,
+            reason:
+                PutOnFailureReason::ItemOrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => format!(
+            "There is no #{requested} '{item_query}' in your inventory; {available} matched."
+        ),
+
+        GameEvent::PutOnFailed {
+            feature_query,
+            reason: PutOnFailureReason::FeatureNotFound,
+            ..
+        } => format!("You do not see '{feature_query}' here."),
+
+        GameEvent::PutOnFailed {
+            item_query,
+            feature_query,
+            reason: PutOnFailureReason::FeatureAmbiguous { match_count },
+            ..
+        } => {
+            let choices = (1..=*match_count)
+                .map(|number| format!("{number}. {feature_query} (feature)"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "More than one feature matches '{feature_query}':\n{choices}\nTry 'put {item_query} on 1 {feature_query}' or another listed number."
+            )
+        }
+
+        GameEvent::PutOnFailed {
+            feature_query,
+            reason:
+                PutOnFailureReason::FeatureOrdinalOutOfRange {
+                    requested,
+                    available,
+                },
+            ..
+        } => format!("There is no #{requested} '{feature_query}' here; {available} matched."),
+
+        GameEvent::PutOnFailed {
+            reason: PutOnFailureReason::NotSupporter { feature_name },
+            ..
+        } => format!("You cannot put things on {feature_name}."),
+
+        GameEvent::PutOnFailed {
+            reason: PutOnFailureReason::Rejected { message } | PutOnFailureReason::Full { message },
+            ..
+        } => message.clone(),
+
         GameEvent::DropFailed {
             query,
             reason: DropFailureReason::NotFound,
@@ -261,7 +355,19 @@ pub fn render_event(event: &GameEvent) -> String {
         }
 
         GameEvent::FeatureExamined { feature, .. } => {
-            format!("{}\n{}", feature.name, feature.description)
+            let mut rendered = format!("{}\n{}", feature.name, feature.description);
+            if !feature.items.is_empty() {
+                rendered.push_str(&format!(
+                    "\nOn it: {}",
+                    feature
+                        .items
+                        .iter()
+                        .map(|item| item.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            rendered
         }
 
         GameEvent::NpcExamined { npc, .. } => {
@@ -444,6 +550,7 @@ mod tests {
                 id: FeatureId("test_feature".to_string()),
                 name: "Test Feature".to_string(),
                 room_description: "A test feature stands here.".to_string(),
+                items: vec![],
             }],
             npcs: vec![ObservedNpc {
                 id: NpcId("test_npc".to_string()),
@@ -474,6 +581,48 @@ mod tests {
         assert_eq!(
             render_event(&event),
             "Starting Room\nA test room.\nItems: none\nExits: none"
+        );
+    }
+
+    #[test]
+    fn room_observation_identifies_items_on_features() {
+        let event = GameEvent::RoomObserved {
+            room_id: RoomId("start".to_string()),
+            name: "Starting Room".to_string(),
+            description: "A test room.".to_string(),
+            items: vec![],
+            features: vec![ObservedFeature {
+                id: FeatureId("hook".to_string()),
+                name: "Brass Hook".to_string(),
+                room_description: "A brass hook is mounted here.".to_string(),
+                items: vec![ObservedItem {
+                    id: ItemId("cloak".to_string()),
+                    name: "Traveler's Cloak".to_string(),
+                }],
+            }],
+            npcs: vec![],
+            exits: vec![],
+        };
+
+        assert!(render_event(&event).contains("On Brass Hook: Traveler's Cloak"));
+        assert!(render_event(&event).contains("Items: none"));
+    }
+
+    #[test]
+    fn placed_item_renders_supporter_name() {
+        let event = GameEvent::ItemPlacedOnFeature {
+            character_id: CharacterId("player".to_string()),
+            item: ObservedItem {
+                id: ItemId("cloak".to_string()),
+                name: "Traveler's Cloak".to_string(),
+            },
+            feature_id: FeatureId("hook".to_string()),
+            feature_name: "Brass Hook".to_string(),
+        };
+
+        assert_eq!(
+            render_event(&event),
+            "You put Traveler's Cloak on Brass Hook."
         );
     }
 
@@ -758,6 +907,7 @@ mod tests {
                 id: FeatureId("founders_plaque".to_string()),
                 name: "Founder's Plaque".to_string(),
                 description: "A weathered bronze plaque.".to_string(),
+                items: vec![],
             },
         };
 

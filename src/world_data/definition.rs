@@ -72,6 +72,27 @@ pub struct FeatureDefinition {
     pub name: String,
     pub room_description: String,
     pub description: String,
+    #[serde(default)]
+    pub placement: Option<FeaturePlacementDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeaturePlacementDefinition {
+    pub relation: PlacementRelationDefinition,
+    #[serde(default)]
+    pub capacity: Option<usize>,
+    #[serde(default)]
+    pub accepts_items: Vec<String>,
+    #[serde(default)]
+    pub rejection_message: Option<String>,
+    #[serde(default)]
+    pub full_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementRelationDefinition {
+    On,
 }
 
 #[derive(Debug, Deserialize)]

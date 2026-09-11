@@ -24,7 +24,8 @@ mod tests {
     use crate::game::exit::ExitRequirement;
     use crate::game::ids::ItemId;
     use crate::game::ids::RoomId;
-    use crate::game::ids::{FactId, NpcId, QuestId, QuestStepId};
+    use crate::game::ids::{FactId, FeatureId, NpcId, QuestId, QuestStepId};
+    use crate::game::item_location::ItemLocation;
     use crate::game::quest::QuestObjective;
 
     #[test]
@@ -124,6 +125,20 @@ mod tests {
         assert_eq!(
             observatory_exit.failure_message.as_deref(),
             Some("You are not yet prepared to enter the old observatory.")
+        );
+
+        let hook = world
+            .feature(&FeatureId("brass_hook".to_string()))
+            .expect("brass hook should exist");
+        let supporter = hook.supporter.as_ref().expect("hook should be a supporter");
+        assert_eq!(supporter.capacity, Some(1));
+        assert_eq!(
+            supporter.accepts_items,
+            vec![ItemId("travelers_cloak".to_string())]
+        );
+        assert_eq!(
+            world.item_location(&ItemId("travelers_cloak".to_string())),
+            Some(&ItemLocation::Room(RoomId("origin_plaza".to_string())))
         );
     }
 }

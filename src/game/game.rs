@@ -1,10 +1,10 @@
 use super::character::Character;
-use super::command::{AskQuery, Command, TargetKind, TargetQuery};
+use super::command::{AskQuery, Command, PutOnQuery, TargetKind, TargetQuery};
 use super::direction::Direction;
 use super::event::{
     AskFailureReason, DropFailureReason, ExamineFailureReason, ExaminedFeature, ExaminedItem,
     ExaminedNpc, GameEvent, ObservedFeature, ObservedItem, ObservedNpc, ObservedQuest,
-    TakeFailureReason, TalkFailureReason,
+    PutOnFailureReason, TakeFailureReason, TalkFailureReason,
 };
 use super::exit::ExitRequirement;
 use super::ids::{FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestKey};
@@ -204,6 +204,16 @@ impl Game {
                     id: feature.id.clone(),
                     name: feature.name.clone(),
                     room_description: feature.room_description.clone(),
+                    items: self
+                        .world
+                        .item_ids_on_feature(feature_id)
+                        .filter_map(|item_id| {
+                            self.world.item(item_id).map(|item| ObservedItem {
+                                id: item.id.clone(),
+                                name: item.name.clone(),
+                            })
+                        })
+                        .collect(),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -317,7 +327,7 @@ impl Game {
         let normalized_query = normalize_name(query);
 
         self.world
-            .item_ids_in_room(&room.id)
+            .item_ids_accessible_in_room(room)
             .filter(|item_id| {
                 self.world
                     .item(item_id)
@@ -562,6 +572,164 @@ impl Game {
             character_id: self.character.id.clone(),
             room_id,
             item: observed_item,
+        }]
+    }
+
+    fn attempt_put_on(&mut self, mut query: PutOnQuery) -> Vec<GameEvent> {
+        query.item.name = normalize_name(&query.item.name);
+        query.feature.name = normalize_name(&query.feature.name);
+        let item_matches = self.matching_inventory_items(&query.item.name);
+        let item_id = if let Some(ordinal) = query.item.ordinal {
+            let requested = ordinal.get();
+            let Some(item_id) = item_matches.get(requested - 1) else {
+                return vec![GameEvent::PutOnFailed {
+                    character_id: self.character.id.clone(),
+                    item_query: query.item.name,
+                    feature_query: query.feature.name,
+                    reason: PutOnFailureReason::ItemOrdinalOutOfRange {
+                        requested,
+                        available: item_matches.len(),
+                    },
+                }];
+            };
+            item_id.clone()
+        } else {
+            match item_matches.as_slice() {
+                [] => {
+                    return vec![GameEvent::PutOnFailed {
+                        character_id: self.character.id.clone(),
+                        item_query: query.item.name,
+                        feature_query: query.feature.name,
+                        reason: PutOnFailureReason::ItemNotFound,
+                    }];
+                }
+                [item_id] => item_id.clone(),
+                _ => {
+                    return vec![GameEvent::PutOnFailed {
+                        character_id: self.character.id.clone(),
+                        item_query: query.item.name,
+                        feature_query: query.feature.name,
+                        reason: PutOnFailureReason::ItemAmbiguous {
+                            match_count: item_matches.len(),
+                        },
+                    }];
+                }
+            }
+        };
+
+        let feature_matches = self.matching_room_features(&query.feature.name);
+        let feature_id = if let Some(ordinal) = query.feature.ordinal {
+            let requested = ordinal.get();
+            let Some(feature_id) = feature_matches.get(requested - 1) else {
+                return vec![GameEvent::PutOnFailed {
+                    character_id: self.character.id.clone(),
+                    item_query: query.item.name,
+                    feature_query: query.feature.name,
+                    reason: PutOnFailureReason::FeatureOrdinalOutOfRange {
+                        requested,
+                        available: feature_matches.len(),
+                    },
+                }];
+            };
+            feature_id.clone()
+        } else {
+            match feature_matches.as_slice() {
+                [] => {
+                    return vec![GameEvent::PutOnFailed {
+                        character_id: self.character.id.clone(),
+                        item_query: query.item.name,
+                        feature_query: query.feature.name,
+                        reason: PutOnFailureReason::FeatureNotFound,
+                    }];
+                }
+                [feature_id] => feature_id.clone(),
+                _ => {
+                    return vec![GameEvent::PutOnFailed {
+                        character_id: self.character.id.clone(),
+                        item_query: query.item.name,
+                        feature_query: query.feature.name,
+                        reason: PutOnFailureReason::FeatureAmbiguous {
+                            match_count: feature_matches.len(),
+                        },
+                    }];
+                }
+            }
+        };
+
+        let Some(feature) = self.world.feature(&feature_id) else {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::FeatureNotFound,
+            }];
+        };
+        let feature_name = feature.name.clone();
+        let Some(supporter) = feature.supporter.clone() else {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::NotSupporter { feature_name },
+            }];
+        };
+        if !supporter.accepts_items.is_empty() && !supporter.accepts_items.contains(&item_id) {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::Rejected {
+                    message: supporter
+                        .rejection_message
+                        .unwrap_or_else(|| format!("That does not belong on the {feature_name}.")),
+                },
+            }];
+        }
+        let item_count = self.world.item_ids_on_feature(&feature_id).count();
+        if supporter
+            .capacity
+            .is_some_and(|capacity| item_count >= capacity)
+        {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::Full {
+                    message: supporter
+                        .full_message
+                        .unwrap_or_else(|| format!("There is no room on the {feature_name}.")),
+                },
+            }];
+        }
+        let Some(item) = self.world.item(&item_id) else {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::ItemNotFound,
+            }];
+        };
+        let observed_item = ObservedItem {
+            id: item.id.clone(),
+            name: item.name.clone(),
+        };
+        if !self
+            .world
+            .move_item(&item_id, ItemLocation::OnFeature(feature_id.clone()))
+        {
+            return vec![GameEvent::PutOnFailed {
+                character_id: self.character.id.clone(),
+                item_query: query.item.name,
+                feature_query: query.feature.name,
+                reason: PutOnFailureReason::ItemNotFound,
+            }];
+        }
+
+        vec![GameEvent::ItemPlacedOnFeature {
+            character_id: self.character.id.clone(),
+            item: observed_item,
+            feature_id,
+            feature_name,
         }]
     }
 
@@ -915,6 +1083,16 @@ impl Game {
                         id: feature.id.clone(),
                         name: feature.name.clone(),
                         description: feature.description.clone(),
+                        items: self
+                            .world
+                            .item_ids_on_feature(feature_id)
+                            .filter_map(|item_id| {
+                                self.world.item(item_id).map(|item| ObservedItem {
+                                    id: item.id.clone(),
+                                    name: item.name.clone(),
+                                })
+                            })
+                            .collect(),
                     },
                 }]
             }
@@ -948,6 +1126,7 @@ impl Game {
             Command::Inventory => self.observe_inventory().into_iter().collect(),
             Command::Quests => vec![self.observe_quests()],
             Command::Drop(query) => self.attempt_drop(query),
+            Command::PutOn(query) => self.attempt_put_on(query),
             Command::Examine(query) => self.attempt_examine(query),
             Command::Talk(query) => self.attempt_talk(query),
             Command::Ask(query) => self.attempt_ask(query),
@@ -959,7 +1138,7 @@ impl Game {
 mod tests {
     use super::*;
     use crate::game::exit::Exit;
-    use crate::game::feature::RoomFeature;
+    use crate::game::feature::{RoomFeature, Supporter};
     use crate::game::ids::{
         CharacterId, FactId, FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestKey,
         QuestStepId, RoomId, WorldId,
@@ -1015,6 +1194,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            supporter: None,
         };
 
         let mut features = HashMap::new();
@@ -1104,6 +1284,26 @@ mod tests {
             .collect()
     }
 
+    fn make_test_feature_supporter(game: &mut Game, capacity: Option<usize>) {
+        game.world
+            .features
+            .get_mut(&FeatureId("test_feature".to_string()))
+            .unwrap()
+            .supporter = Some(Supporter {
+            capacity,
+            accepts_items: vec![],
+            rejection_message: None,
+            full_message: None,
+        });
+    }
+
+    fn put_on_query(item: &str, feature: &str) -> PutOnQuery {
+        PutOnQuery {
+            item: TargetQuery::item(item.to_string()),
+            feature: TargetQuery::feature(feature.to_string()),
+        }
+    }
+
     fn add_conditional_topic(
         game: &mut Game,
         requires_facts: Vec<FactId>,
@@ -1189,6 +1389,7 @@ mod tests {
                     id: FeatureId("test_feature".to_string()),
                     name: "Test Feature".to_string(),
                     room_description: "A test feature stands here.".to_string(),
+                    items: vec![],
                 }],
                 npcs: vec![ObservedNpc {
                     id: NpcId("test_npc".to_string()),
@@ -1906,6 +2107,140 @@ mod tests {
     }
 
     #[test]
+    fn putting_carried_item_on_supporter_changes_its_location() {
+        let mut game = game_with_character_in("start");
+        make_test_feature_supporter(&mut game, Some(1));
+        game.attempt_take("test item".to_string());
+
+        let events = game.attempt_put_on(put_on_query("test item", "test feature"));
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::ItemPlacedOnFeature { item, feature_id, .. }]
+                if item.id == ItemId("test_item".to_string())
+                    && feature_id == &FeatureId("test_feature".to_string())
+        ));
+        assert_eq!(
+            game.world.item_location(&ItemId("test_item".to_string())),
+            Some(&ItemLocation::OnFeature(FeatureId(
+                "test_feature".to_string()
+            )))
+        );
+        assert!(carried_items(&game).is_empty());
+    }
+
+    #[test]
+    fn supported_item_remains_visible_examinable_and_takeable() {
+        let mut game = game_with_character_in("start");
+        make_test_feature_supporter(&mut game, Some(1));
+        game.attempt_take("test item".to_string());
+        game.attempt_put_on(put_on_query("test item", "test feature"));
+
+        assert_eq!(
+            game.matching_room_items("test item"),
+            vec![ItemId("test_item".to_string())]
+        );
+        assert!(matches!(
+            game.attempt_examine("test item".to_string()).as_slice(),
+            [GameEvent::ItemExamined { .. }]
+        ));
+        assert!(matches!(
+            game.observe_current_room(),
+            Some(GameEvent::RoomObserved { features, .. })
+                if features[0].items[0].id == ItemId("test_item".to_string())
+        ));
+        assert!(matches!(
+            game.attempt_examine("test feature".to_string()).as_slice(),
+            [GameEvent::FeatureExamined { feature, .. }]
+                if feature.items[0].id == ItemId("test_item".to_string())
+        ));
+        assert!(matches!(
+            game.attempt_take("test item".to_string()).as_slice(),
+            [GameEvent::ItemTaken { .. }]
+        ));
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
+    }
+
+    #[test]
+    fn non_supporter_rejects_put_without_changing_item_location() {
+        let mut game = game_with_character_in("start");
+        game.attempt_take("test item".to_string());
+
+        let events = game.attempt_put_on(put_on_query("test item", "test feature"));
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::PutOnFailed {
+                reason: PutOnFailureReason::NotSupporter { .. },
+                ..
+            }]
+        ));
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
+    }
+
+    #[test]
+    fn supporter_item_whitelist_rejects_unaccepted_item() {
+        let mut game = game_with_character_in("start");
+        make_test_feature_supporter(&mut game, Some(1));
+        game.world
+            .features
+            .get_mut(&FeatureId("test_feature".to_string()))
+            .unwrap()
+            .supporter
+            .as_mut()
+            .unwrap()
+            .accepts_items = vec![ItemId("different_item".to_string())];
+        game.attempt_take("test item".to_string());
+
+        let events = game.attempt_put_on(put_on_query("test item", "test feature"));
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::PutOnFailed {
+                reason: PutOnFailureReason::Rejected { .. },
+                ..
+            }]
+        ));
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
+    }
+
+    #[test]
+    fn full_supporter_rejects_item_without_changing_its_location() {
+        let mut game = game_with_character_in("start");
+        make_test_feature_supporter(&mut game, Some(1));
+        let second_item = Item {
+            id: ItemId("second_item".to_string()),
+            name: "Second Item".to_string(),
+            description: "Another test item.".to_string(),
+        };
+        game.world.items.insert(second_item.id.clone(), second_item);
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::OnFeature(FeatureId("test_feature".to_string())),
+        );
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
+
+        let events = game.attempt_put_on(put_on_query("second item", "test feature"));
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::PutOnFailed {
+                reason: PutOnFailureReason::Full { .. },
+                ..
+            }]
+        ));
+        assert_eq!(
+            game.world.item_location(&ItemId("second_item".to_string())),
+            Some(&ItemLocation::CarriedBy(CharacterId("player".to_string())))
+        );
+    }
+
+    #[test]
     fn accessible_items_include_room_and_inventory_items() {
         let mut game = game_with_character_in("start");
 
@@ -2035,6 +2370,7 @@ mod tests {
                     id: FeatureId("test_feature".to_string()),
                     name: "Test Feature".to_string(),
                     description: "A feature used for testing.".to_string(),
+                    items: vec![],
                 },
             }]
         );

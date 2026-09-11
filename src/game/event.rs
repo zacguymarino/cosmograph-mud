@@ -17,6 +17,19 @@ pub enum DropFailureReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PutOnFailureReason {
+    ItemNotFound,
+    ItemAmbiguous { match_count: usize },
+    ItemOrdinalOutOfRange { requested: usize, available: usize },
+    FeatureNotFound,
+    FeatureAmbiguous { match_count: usize },
+    FeatureOrdinalOutOfRange { requested: usize, available: usize },
+    NotSupporter { feature_name: String },
+    Rejected { message: String },
+    Full { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExamineFailureReason {
     NotFound,
     Ambiguous { kinds: Vec<TargetKind> },
@@ -49,6 +62,7 @@ pub struct ObservedFeature {
     pub id: FeatureId,
     pub name: String,
     pub room_description: String,
+    pub items: Vec<ObservedItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +84,7 @@ pub struct ExaminedFeature {
     pub id: FeatureId,
     pub name: String,
     pub description: String,
+    pub items: Vec<ObservedItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,6 +189,20 @@ pub enum GameEvent {
         room_id: RoomId,
         query: String,
         reason: DropFailureReason,
+    },
+
+    ItemPlacedOnFeature {
+        character_id: CharacterId,
+        item: ObservedItem,
+        feature_id: FeatureId,
+        feature_name: String,
+    },
+
+    PutOnFailed {
+        character_id: CharacterId,
+        item_query: String,
+        feature_query: String,
+        reason: PutOnFailureReason,
     },
 
     ItemExamined {

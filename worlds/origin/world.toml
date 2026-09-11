@@ -38,6 +38,11 @@ id = "forest_rusty_key"
 name = "Rusty Key"
 description = "A long-neglected key, green with age beneath its patches of rust."
 
+[[items]]
+id = "travelers_cloak"
+name = "Traveler's Cloak"
+description = "A sturdy charcoal cloak made for long journeys between unfamiliar places."
+
 [[features]]
 id = "founders_plaque"
 name = "Founder's Plaque"
@@ -49,6 +54,13 @@ id = "rusty_key_relief"
 name = "Rusty-Key"
 room_description = "A relief carved into the podium depicts an oversized rusty key."
 description = "The stone relief portrays a rusty key surrounded by an unfamiliar constellation."
+
+[[features]]
+id = "brass_hook"
+name = "Brass Hook"
+room_description = "A polished brass hook is fixed beside the tavern door."
+description = "The sturdy hook is shaped to hold a single garment."
+placement = { relation = "on", capacity = 1, accepts_items = ["travelers_cloak"], rejection_message = "That would not hang properly from the brass hook.", full_message = "The brass hook is already occupied." }
 
 [[npcs]]
 id = "mara_voss"
@@ -85,7 +97,7 @@ starts_quests = ["lights_in_the_old_observatory"]
 id = "origin_plaza"
 name = "Origin Plaza"
 description = "The arrival zone of this world."
-items = ["rusty_key"]
+items = ["rusty_key", "travelers_cloak"]
 features = ["founders_plaque", "rusty_key_relief"]
 
 [rooms.exits]
@@ -115,6 +127,7 @@ id = "rusty_tavern"
 name = "Rusty Tavern"
 description = "A worn but welcoming tavern. A fire crackles beside an old wooden bar."
 npcs = ["mara_voss"]
+features = ["brass_hook"]
 
 [rooms.exits]
 west = "origin_plaza"

@@ -284,6 +284,47 @@ fn validate_unique_feature_placements(world: &WorldDefinition) -> Result<(), Str
     Ok(())
 }
 
+fn validate_feature_placements(world: &WorldDefinition) -> Result<(), String> {
+    for feature in &world.features {
+        let Some(placement) = &feature.placement else {
+            continue;
+        };
+        if placement.capacity == Some(0) {
+            return Err(format!(
+                "Feature '{}' has zero placement capacity",
+                feature.id
+            ));
+        }
+        let mut accepted = HashSet::new();
+        for item_id in &placement.accepts_items {
+            if !world.items.iter().any(|item| &item.id == item_id) {
+                return Err(format!(
+                    "Feature '{}' accepts missing item '{}'",
+                    feature.id, item_id
+                ));
+            }
+            if !accepted.insert(item_id) {
+                return Err(format!(
+                    "Feature '{}' accepts item '{}' more than once",
+                    feature.id, item_id
+                ));
+            }
+        }
+        for (field, message) in [
+            ("rejection_message", &placement.rejection_message),
+            ("full_message", &placement.full_message),
+        ] {
+            if message
+                .as_ref()
+                .is_some_and(|message| message.trim().is_empty())
+            {
+                return Err(format!("Feature '{}' has empty {}", feature.id, field));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_npc_ids(world: &WorldDefinition) -> Result<(), String> {
     for npc in &world.npcs {
         if npc.id.trim().is_empty() {
@@ -663,6 +704,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_unique_item_ids(world)?;
     validate_feature_ids(world)?;
     validate_unique_feature_ids(world)?;
+    validate_feature_placements(world)?;
     validate_room_feature_references(world)?;
     validate_unique_feature_placements(world)?;
     validate_npc_ids(world)?;
@@ -691,9 +733,9 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        ExitDefinition, FactDefinition, FeatureDefinition, ItemDefinition, NpcDefinition,
-        NpcTopicDefinition, QuestDefinition, QuestObjectiveDefinition, QuestStepDefinition,
-        RoomDefinition,
+        ExitDefinition, FactDefinition, FeatureDefinition, FeaturePlacementDefinition,
+        ItemDefinition, NpcDefinition, NpcTopicDefinition, PlacementRelationDefinition,
+        QuestDefinition, QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -951,6 +993,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            placement: None,
         });
 
         let result = validate_world(&world);
@@ -967,6 +1010,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            placement: None,
         });
 
         let result = validate_world(&world);
@@ -986,6 +1030,7 @@ mod tests {
             name: "First Feature".to_string(),
             room_description: "The first feature stands here.".to_string(),
             description: "The first feature.".to_string(),
+            placement: None,
         });
 
         world.features.push(FeatureDefinition {
@@ -993,6 +1038,7 @@ mod tests {
             name: "Second Feature".to_string(),
             room_description: "The second feature stands here.".to_string(),
             description: "The second feature.".to_string(),
+            placement: None,
         });
 
         let result = validate_world(&world);
@@ -1026,6 +1072,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            placement: None,
         });
 
         world.rooms[0].features.push("test_feature".to_string());
@@ -1045,6 +1092,52 @@ mod tests {
         assert_eq!(
             result,
             Err("Feature 'test_feature' is placed more than once".to_string())
+        );
+    }
+
+    #[test]
+    fn supporter_acceptance_list_must_reference_declared_items() {
+        let mut world = valid_world();
+        world.features.push(FeatureDefinition {
+            id: "hook".to_string(),
+            name: "Hook".to_string(),
+            room_description: "A hook is mounted here.".to_string(),
+            description: "A sturdy hook.".to_string(),
+            placement: Some(FeaturePlacementDefinition {
+                relation: PlacementRelationDefinition::On,
+                capacity: Some(1),
+                accepts_items: vec!["missing_cloak".to_string()],
+                rejection_message: None,
+                full_message: None,
+            }),
+        });
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Feature 'hook' accepts missing item 'missing_cloak'".to_string())
+        );
+    }
+
+    #[test]
+    fn supporter_capacity_must_be_positive() {
+        let mut world = valid_world();
+        world.features.push(FeatureDefinition {
+            id: "hook".to_string(),
+            name: "Hook".to_string(),
+            room_description: "A hook is mounted here.".to_string(),
+            description: "A sturdy hook.".to_string(),
+            placement: Some(FeaturePlacementDefinition {
+                relation: PlacementRelationDefinition::On,
+                capacity: Some(0),
+                accepts_items: vec![],
+                rejection_message: None,
+                full_message: None,
+            }),
+        });
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Feature 'hook' has zero placement capacity".to_string())
         );
     }
 

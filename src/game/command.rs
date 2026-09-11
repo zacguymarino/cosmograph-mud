@@ -67,6 +67,12 @@ pub struct AskQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PutOnQuery {
+    pub item: TargetQuery,
+    pub feature: TargetQuery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Look,
     Exits,
@@ -76,6 +82,7 @@ pub enum Command {
     Inventory,
     Quests,
     Drop(TargetQuery),
+    PutOn(PutOnQuery),
     Examine(TargetQuery),
     Talk(TargetQuery),
     Ask(AskQuery),

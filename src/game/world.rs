@@ -62,6 +62,30 @@ impl World {
         })
     }
 
+    pub fn item_ids_on_feature<'a>(
+        &'a self,
+        feature_id: &'a FeatureId,
+    ) -> impl Iterator<Item = &'a ItemId> + 'a {
+        self.item_placements.iter().filter_map(move |placement| {
+            matches!(&placement.location, ItemLocation::OnFeature(id) if id == feature_id)
+                .then_some(&placement.item_id)
+        })
+    }
+
+    pub fn item_ids_accessible_in_room<'a>(
+        &'a self,
+        room: &'a Room,
+    ) -> impl Iterator<Item = &'a ItemId> + 'a {
+        self.item_placements.iter().filter_map(move |placement| {
+            let accessible = match &placement.location {
+                ItemLocation::Room(room_id) => room_id == &room.id,
+                ItemLocation::OnFeature(feature_id) => room.features.contains(feature_id),
+                ItemLocation::Nowhere | ItemLocation::CarriedBy(_) => false,
+            };
+            accessible.then_some(&placement.item_id)
+        })
+    }
+
     pub fn move_item(&mut self, item_id: &ItemId, location: ItemLocation) -> bool {
         let Some(position) = self
             .item_placements
@@ -129,6 +153,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            supporter: None,
         };
 
         let mut features = HashMap::new();

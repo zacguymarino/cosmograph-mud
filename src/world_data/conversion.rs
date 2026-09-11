@@ -5,7 +5,7 @@ use super::definition::{
 };
 use crate::game::direction::Direction;
 use crate::game::exit::{Exit, ExitRequirement};
-use crate::game::feature::RoomFeature;
+use crate::game::feature::{RoomFeature, Supporter};
 use crate::game::ids::{
     FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestStepId, RoomId, WorldId,
 };
@@ -205,6 +205,16 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
         name: definition.name,
         room_description: definition.room_description,
         description: definition.description,
+        supporter: definition
+            .placement
+            .map(|placement| match placement.relation {
+                super::definition::PlacementRelationDefinition::On => Supporter {
+                    capacity: placement.capacity,
+                    accepts_items: placement.accepts_items.into_iter().map(ItemId).collect(),
+                    rejection_message: placement.rejection_message,
+                    full_message: placement.full_message,
+                },
+            }),
     }
 }
 
@@ -212,8 +222,9 @@ pub fn convert_feature(definition: FeatureDefinition) -> RoomFeature {
 mod tests {
     use super::*;
     use crate::world_data::definition::{
-        ExitDefinition, FactDefinition, FeatureDefinition, ItemDefinition, QuestDefinition,
-        QuestObjectiveDefinition, QuestStepDefinition, RoomDefinition,
+        ExitDefinition, FactDefinition, FeatureDefinition, FeaturePlacementDefinition,
+        ItemDefinition, PlacementRelationDefinition, QuestDefinition, QuestObjectiveDefinition,
+        QuestStepDefinition, RoomDefinition,
     };
     use std::collections::HashMap;
 
@@ -267,6 +278,7 @@ mod tests {
                 name: "Test Feature".to_string(),
                 room_description: "A test feature stands here.".to_string(),
                 description: "A feature used for testing.".to_string(),
+                placement: None,
             }],
             npcs: vec![NpcDefinition {
                 id: "test_npc".to_string(),
@@ -522,6 +534,7 @@ mod tests {
             name: "Test Feature".to_string(),
             room_description: "A test feature stands here.".to_string(),
             description: "A feature used for testing.".to_string(),
+            placement: None,
         };
 
         let feature = convert_feature(definition);
@@ -530,6 +543,36 @@ mod tests {
         assert_eq!(feature.name, "Test Feature");
         assert_eq!(feature.room_description, "A test feature stands here.");
         assert_eq!(feature.description, "A feature used for testing.");
+    }
+
+    #[test]
+    fn supporter_definition_converts_with_typed_accepted_items() {
+        let definition = FeatureDefinition {
+            id: "hook".to_string(),
+            name: "Hook".to_string(),
+            room_description: "A hook is mounted here.".to_string(),
+            description: "A sturdy hook.".to_string(),
+            placement: Some(FeaturePlacementDefinition {
+                relation: PlacementRelationDefinition::On,
+                capacity: Some(1),
+                accepts_items: vec!["test_item".to_string()],
+                rejection_message: Some("That will not hang.".to_string()),
+                full_message: Some("The hook is occupied.".to_string()),
+            }),
+        };
+
+        let feature = convert_feature(definition);
+        let supporter = feature.supporter.expect("supporter should convert");
+
+        assert_eq!(supporter.capacity, Some(1));
+        assert_eq!(
+            supporter.accepts_items,
+            vec![ItemId("test_item".to_string())]
+        );
+        assert_eq!(
+            supporter.rejection_message.as_deref(),
+            Some("That will not hang.")
+        );
     }
 
     #[test]
