@@ -10,6 +10,7 @@ use crate::game::ids::{
     FactId, FeatureId, ItemId, NpcId, NpcTopicId, QuestId, QuestStepId, RoomId, WorldId,
 };
 use crate::game::item::Item;
+use crate::game::item_location::{ItemLocation, ItemPlacement};
 use crate::game::npc::{Npc, NpcTopic};
 use crate::game::quest::{Quest, QuestObjective, QuestStep};
 use crate::game::room::Room;
@@ -48,14 +49,12 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
 
         exits.insert(direction, exit);
     }
-    let items = definition.items.into_iter().map(ItemId).collect();
     let features = definition.features.into_iter().map(FeatureId).collect();
     let npcs = definition.npcs.into_iter().map(NpcId).collect();
     Ok(Room {
         id: RoomId(definition.id),
         name: definition.name,
         description: definition.description,
-        items,
         features,
         npcs,
         exits,
@@ -63,6 +62,27 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
 }
 
 pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
+    let mut item_placements = definition
+        .rooms
+        .iter()
+        .flat_map(|room| {
+            room.items.iter().map(|item_id| ItemPlacement {
+                item_id: ItemId(item_id.clone()),
+                location: ItemLocation::Room(RoomId(room.id.clone())),
+            })
+        })
+        .collect::<Vec<_>>();
+    for item in &definition.items {
+        if !item_placements
+            .iter()
+            .any(|placement| placement.item_id.0 == item.id)
+        {
+            item_placements.push(ItemPlacement {
+                item_id: ItemId(item.id.clone()),
+                location: ItemLocation::Nowhere,
+            });
+        }
+    }
     let facts = definition
         .facts
         .into_iter()
@@ -137,6 +157,7 @@ pub fn convert_world(definition: WorldDefinition) -> Result<World, String> {
         facts,
         quests,
         items,
+        item_placements,
         features,
         npcs,
         rooms,
@@ -304,6 +325,10 @@ mod tests {
         assert_eq!(world.items.len(), 1);
         assert_eq!(world.features.len(), 1);
         assert_eq!(world.npcs.len(), 1);
+        assert_eq!(
+            world.item_location(&ItemId("test_item".to_string())),
+            Some(&ItemLocation::Room(RoomId("start".to_string())))
+        );
         assert!(world.declares_fact(&FactId("knows_secret".to_string())));
         assert_eq!(
             world
@@ -339,6 +364,23 @@ mod tests {
         assert_eq!(npc.name, "Test NPC");
         assert!(world.rooms.contains_key(&RoomId("start".to_string())));
         assert!(world.rooms.contains_key(&RoomId("next_room".to_string())));
+    }
+
+    #[test]
+    fn declared_unplaced_item_converts_with_nowhere_location() {
+        let mut definition = valid_world_definition();
+        definition.items.push(ItemDefinition {
+            id: "unplaced_item".to_string(),
+            name: "Unplaced Item".to_string(),
+            description: "An item not initially present in a room.".to_string(),
+        });
+
+        let world = convert_world(definition).expect("valid world should convert");
+
+        assert_eq!(
+            world.item_location(&ItemId("unplaced_item".to_string())),
+            Some(&ItemLocation::Nowhere)
+        );
     }
 
     #[test]
@@ -407,7 +449,6 @@ mod tests {
 
         assert_eq!(room.id, RoomId("start".to_string()));
         assert_eq!(room.name, "Starting Room");
-        assert_eq!(room.items, vec![ItemId("test_item".to_string())]);
         assert_eq!(
             room.exits
                 .get(&Direction::North)

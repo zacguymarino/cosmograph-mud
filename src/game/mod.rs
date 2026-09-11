@@ -7,6 +7,7 @@ pub mod feature;
 pub mod game;
 pub mod ids;
 pub mod item;
+pub mod item_location;
 pub mod naming;
 pub mod npc;
 pub mod quest;

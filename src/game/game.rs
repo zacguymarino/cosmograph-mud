@@ -8,6 +8,7 @@ use super::event::{
 };
 use super::exit::ExitRequirement;
 use super::ids::{FactKey, FeatureId, ItemId, NpcId, NpcTopicId, QuestKey};
+use super::item_location::ItemLocation;
 use super::naming::normalize_name;
 use super::npc::NpcTopic;
 use super::quest::{QuestObjective, QuestProgress, QuestStatus};
@@ -136,7 +137,8 @@ impl Game {
                             room_id == &self.character.current_room
                         }
                         QuestObjective::PossessItem(item_id) => {
-                            self.character.inventory.contains(item_id)
+                            self.world.item_location(item_id)
+                                == Some(&ItemLocation::CarriedBy(self.character.id.clone()))
                         }
                         QuestObjective::AskTopic { .. } => false,
                     };
@@ -179,9 +181,9 @@ impl Game {
     fn observe_current_room(&self) -> Option<GameEvent> {
         let room = self.world.room(&self.character.current_room)?;
 
-        let items = room
-            .items
-            .iter()
+        let items = self
+            .world
+            .item_ids_in_room(&room.id)
             .map(|item_id| {
                 let item = self.world.item(item_id)?;
 
@@ -263,7 +265,8 @@ impl Game {
             .iter()
             .all(|requirement| match requirement {
                 ExitRequirement::CarryingItem(item_id) => {
-                    self.character.inventory.contains(item_id)
+                    self.world.item_location(item_id)
+                        == Some(&ItemLocation::CarriedBy(self.character.id.clone()))
                 }
                 ExitRequirement::KnowsFact(fact_id) => self.character.facts.contains(&FactKey {
                     world_id: self.world.id.clone(),
@@ -313,8 +316,8 @@ impl Game {
 
         let normalized_query = normalize_name(query);
 
-        room.items
-            .iter()
+        self.world
+            .item_ids_in_room(&room.id)
             .filter(|item_id| {
                 self.world
                     .item(item_id)
@@ -383,30 +386,26 @@ impl Game {
             name: item.name.clone(),
         };
 
-        let Some(room) = self.world.room_mut(&room_id) else {
+        if self.world.room(&room_id).is_none() {
             return vec![GameEvent::TakeFailed {
                 character_id: self.character.id.clone(),
                 room_id,
                 query: query_name.clone(),
                 reason: TakeFailureReason::NotFound,
             }];
-        };
+        }
 
-        let Some(position) = room
-            .items
-            .iter()
-            .position(|candidate| candidate == &item_id)
-        else {
+        if !self
+            .world
+            .move_item(&item_id, ItemLocation::CarriedBy(self.character.id.clone()))
+        {
             return vec![GameEvent::TakeFailed {
                 character_id: self.character.id.clone(),
                 room_id,
                 query: query_name,
                 reason: TakeFailureReason::NotFound,
             }];
-        };
-
-        room.items.remove(position);
-        self.character.inventory.push(item_id);
+        }
 
         let mut events = vec![GameEvent::ItemTaken {
             character_id: self.character.id.clone(),
@@ -419,9 +418,8 @@ impl Game {
 
     fn observe_inventory(&self) -> Option<GameEvent> {
         let items = self
-            .character
-            .inventory
-            .iter()
+            .world
+            .item_ids_carried_by(&self.character.id)
             .map(|item_id| {
                 let item = self.world.item(item_id)?;
 
@@ -458,9 +456,8 @@ impl Game {
     fn matching_inventory_items(&self, query: &str) -> Vec<ItemId> {
         let normalized_query = normalize_name(query);
 
-        self.character
-            .inventory
-            .iter()
+        self.world
+            .item_ids_carried_by(&self.character.id)
             .filter(|item_id| {
                 self.world
                     .item(item_id)
@@ -529,31 +526,37 @@ impl Game {
             name: item.name.clone(),
         };
 
-        let Some(position) = self
-            .character
-            .inventory
-            .iter()
-            .position(|candidate| candidate == &item_id)
-        else {
+        if self.world.item_location(&item_id)
+            != Some(&ItemLocation::CarriedBy(self.character.id.clone()))
+        {
             return vec![GameEvent::DropFailed {
                 character_id: self.character.id.clone(),
                 room_id,
                 query: query_name.clone(),
                 reason: DropFailureReason::NotFound,
             }];
-        };
+        }
 
-        let Some(room) = self.world.room_mut(&room_id) else {
+        if self.world.room(&room_id).is_none() {
             return vec![GameEvent::DropFailed {
                 character_id: self.character.id.clone(),
                 room_id,
                 query: query_name,
                 reason: DropFailureReason::NotFound,
             }];
-        };
+        }
 
-        let dropped_item_id = self.character.inventory.remove(position);
-        room.items.push(dropped_item_id);
+        if !self
+            .world
+            .move_item(&item_id, ItemLocation::Room(room_id.clone()))
+        {
+            return vec![GameEvent::DropFailed {
+                character_id: self.character.id.clone(),
+                room_id,
+                query: query_name,
+                reason: DropFailureReason::NotFound,
+            }];
+        }
 
         vec![GameEvent::ItemDropped {
             character_id: self.character.id.clone(),
@@ -962,6 +965,7 @@ mod tests {
         QuestStepId, RoomId, WorldId,
     };
     use crate::game::item::Item;
+    use crate::game::item_location::ItemPlacement;
     use crate::game::npc::{Npc, NpcTopic};
     use crate::game::quest::{Quest, QuestObjective, QuestProgress, QuestStatus, QuestStep};
     use crate::game::room::Room;
@@ -979,7 +983,6 @@ mod tests {
             id: RoomId("start".to_string()),
             name: "Starting Room".to_string(),
             description: "A test room.".to_string(),
-            items: vec![ItemId("test_item".to_string())],
             features: vec![FeatureId("test_feature".to_string())],
             npcs: vec![NpcId("test_npc".to_string())],
             exits: start_exits,
@@ -989,7 +992,6 @@ mod tests {
             id: RoomId("next_room".to_string()),
             name: "Next Room".to_string(),
             description: "Another test room.".to_string(),
-            items: vec![],
             features: vec![],
             npcs: vec![],
             exits: HashMap::new(),
@@ -1059,6 +1061,10 @@ mod tests {
             facts: HashSet::new(),
             quests,
             items,
+            item_placements: vec![ItemPlacement {
+                item_id: ItemId("test_item".to_string()),
+                location: ItemLocation::Room(RoomId("start".to_string())),
+            }],
             features,
             npcs,
             rooms,
@@ -1068,12 +1074,34 @@ mod tests {
             id: CharacterId("player".to_string()),
             name: "Player".to_string(),
             current_room: RoomId(current_room.to_string()),
-            inventory: vec![],
             facts: HashSet::new(),
             quests: HashMap::new(),
         };
 
         Game::new(world, character)
+    }
+
+    fn place_item(game: &mut Game, item_id: &str, location: ItemLocation) {
+        let item_id = ItemId(item_id.to_string());
+        if !game.world.move_item(&item_id, location.clone()) {
+            game.world
+                .item_placements
+                .push(ItemPlacement { item_id, location });
+        }
+    }
+
+    fn carried_items(game: &Game) -> Vec<ItemId> {
+        game.world
+            .item_ids_carried_by(&game.character.id)
+            .cloned()
+            .collect()
+    }
+
+    fn room_items(game: &Game, room_id: &str) -> Vec<ItemId> {
+        game.world
+            .item_ids_in_room(&RoomId(room_id.to_string()))
+            .cloned()
+            .collect()
     }
 
     fn add_conditional_topic(
@@ -1267,9 +1295,11 @@ mod tests {
                     failure_message: Some("The test door is locked.".to_string()),
                 },
             );
-        game.character
-            .inventory
-            .push(ItemId("test_item".to_string()));
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
 
         let events = game.attempt_move(Direction::North);
 
@@ -1279,10 +1309,7 @@ mod tests {
                 if to == &RoomId("next_room".to_string())
         ));
         assert_eq!(game.character.current_room, RoomId("next_room".to_string()));
-        assert_eq!(
-            game.character.inventory,
-            vec![ItemId("test_item".to_string())]
-        );
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
     }
 
     #[test]
@@ -1359,9 +1386,11 @@ mod tests {
                     failure_message: Some("You are not prepared.".to_string()),
                 },
             );
-        game.character
-            .inventory
-            .push(ItemId("test_item".to_string()));
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
 
         assert!(matches!(
             game.attempt_move(Direction::North).as_slice(),
@@ -1568,18 +1597,8 @@ mod tests {
             }]
         );
 
-        assert_eq!(
-            game.character.inventory,
-            vec![ItemId("test_item".to_string())]
-        );
-
-        assert!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items
-                .is_empty()
-        );
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
+        assert!(room_items(&game, "start").is_empty());
     }
 
     #[test]
@@ -1651,11 +1670,11 @@ mod tests {
         game.world
             .items
             .insert(other_item.id.clone(), other_item.clone());
-        game.world
-            .room_mut(&RoomId("start".to_string()))
-            .unwrap()
-            .items
-            .push(other_item.id);
+        place_item(
+            &mut game,
+            &other_item.id.0,
+            ItemLocation::Room(RoomId("start".to_string())),
+        );
         let key = start_test_quest(&mut game);
 
         let events = game.attempt_take("other item".to_string());
@@ -1686,13 +1705,9 @@ mod tests {
             }]
         );
 
-        assert!(game.character.inventory.is_empty());
-
+        assert!(carried_items(&game).is_empty());
         assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items,
+            room_items(&game, "start"),
             vec![ItemId("test_item".to_string())]
         );
     }
@@ -1709,11 +1724,11 @@ mod tests {
 
         game.world.items.insert(second_item.id.clone(), second_item);
 
-        game.world
-            .room_mut(&RoomId("start".to_string()))
-            .expect("starting room should exist")
-            .items
-            .push(ItemId("second_item".to_string()));
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::Room(RoomId("start".to_string())),
+        );
 
         let events = game.attempt_take("test item".to_string());
 
@@ -1727,16 +1742,8 @@ mod tests {
             }]
         );
 
-        assert!(game.character.inventory.is_empty());
-
-        assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items
-                .len(),
-            2
-        );
+        assert!(carried_items(&game).is_empty());
+        assert_eq!(room_items(&game, "start").len(), 2);
     }
 
     #[test]
@@ -1747,10 +1754,7 @@ mod tests {
 
         assert!(matches!(events.as_slice(), [GameEvent::ItemTaken { .. }]));
 
-        assert_eq!(
-            game.character.inventory,
-            vec![ItemId("test_item".to_string())]
-        );
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
     }
 
     #[test]
@@ -1820,13 +1824,9 @@ mod tests {
             }]
         );
 
-        assert!(game.character.inventory.is_empty());
-
+        assert!(carried_items(&game).is_empty());
         assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items,
+            room_items(&game, "start"),
             vec![ItemId("test_item".to_string())]
         );
     }
@@ -1847,13 +1847,9 @@ mod tests {
             }]
         );
 
-        assert!(game.character.inventory.is_empty());
-
+        assert!(carried_items(&game).is_empty());
         assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items,
+            room_items(&game, "start"),
             vec![ItemId("test_item".to_string())]
         );
     }
@@ -1871,9 +1867,11 @@ mod tests {
 
         game.world.items.insert(second_item.id.clone(), second_item);
 
-        game.character
-            .inventory
-            .push(ItemId("second_item".to_string()));
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
 
         let events = game.attempt_drop("test item".to_string());
 
@@ -1887,15 +1885,8 @@ mod tests {
             }]
         );
 
-        assert_eq!(game.character.inventory.len(), 2);
-
-        assert!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items
-                .is_empty()
-        );
+        assert_eq!(carried_items(&game).len(), 2);
+        assert!(room_items(&game, "start").is_empty());
     }
 
     #[test]
@@ -1907,13 +1898,9 @@ mod tests {
 
         assert!(matches!(events.as_slice(), [GameEvent::ItemDropped { .. }]));
 
-        assert!(game.character.inventory.is_empty());
-
+        assert!(carried_items(&game).is_empty());
         assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items,
+            room_items(&game, "start"),
             vec![ItemId("test_item".to_string())]
         );
     }
@@ -1996,9 +1983,11 @@ mod tests {
 
         game.world.items.insert(second_item.id.clone(), second_item);
 
-        game.character
-            .inventory
-            .push(ItemId("second_item".to_string()));
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
 
         assert_eq!(
             game.attempt_examine("test item".to_string()),
@@ -2128,11 +2117,11 @@ mod tests {
             description: "The second matching item.".to_string(),
         };
         game.world.items.insert(second_item.id.clone(), second_item);
-        game.world
-            .room_mut(&RoomId("start".to_string()))
-            .expect("starting room should exist")
-            .items
-            .push(ItemId("second_item".to_string()));
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::Room(RoomId("start".to_string())),
+        );
 
         game.attempt_take(
             TargetQuery::item("test item".to_string())
@@ -2140,14 +2129,11 @@ mod tests {
         );
 
         assert_eq!(
-            game.character.inventory,
+            carried_items(&game),
             vec![ItemId("second_item".to_string())]
         );
         assert_eq!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items,
+            room_items(&game, "start"),
             vec![ItemId("test_item".to_string())]
         );
     }
@@ -2161,27 +2147,24 @@ mod tests {
             description: "The second matching item.".to_string(),
         };
         game.world.items.insert(second_item.id.clone(), second_item);
-        game.character.inventory = vec![
-            ItemId("test_item".to_string()),
-            ItemId("second_item".to_string()),
-        ];
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
+        place_item(
+            &mut game,
+            "second_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
 
         game.attempt_drop(
             TargetQuery::item("test item".to_string())
                 .with_ordinal(NonZeroUsize::new(2).expect("2 is nonzero")),
         );
 
-        assert_eq!(
-            game.character.inventory,
-            vec![ItemId("test_item".to_string())]
-        );
-        assert!(
-            game.world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should exist")
-                .items
-                .contains(&ItemId("second_item".to_string()))
-        );
+        assert_eq!(carried_items(&game), vec![ItemId("test_item".to_string())]);
+        assert!(room_items(&game, "start").contains(&ItemId("second_item".to_string())));
     }
 
     #[test]
@@ -2825,9 +2808,11 @@ mod tests {
             .unwrap()
             .steps[0]
             .objective = QuestObjective::PossessItem(ItemId("test_item".to_string()));
-        game.character
-            .inventory
-            .push(ItemId("test_item".to_string()));
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
         set_topic_starts_quests(
             &mut game,
             "test_topic",
@@ -2868,9 +2853,11 @@ mod tests {
             objective: QuestObjective::PossessItem(ItemId("test_item".to_string())),
             next_step: None,
         });
-        game.character
-            .inventory
-            .push(ItemId("test_item".to_string()));
+        place_item(
+            &mut game,
+            "test_item",
+            ItemLocation::CarriedBy(CharacterId("player".to_string())),
+        );
         let key = start_test_quest(&mut game);
 
         let events = game.attempt_ask(AskQuery {
@@ -3162,6 +3149,6 @@ mod tests {
                 },
             }]
         );
-        assert!(game.character.inventory.is_empty());
+        assert!(carried_items(&game).is_empty());
     }
 }

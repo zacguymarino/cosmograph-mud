@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use super::feature::RoomFeature;
 use super::ids::{FactId, FeatureId, ItemId, NpcId, QuestId, RoomId, WorldId};
 use super::item::Item;
+use super::item_location::{ItemLocation, ItemPlacement};
 use super::npc::Npc;
 use super::quest::Quest;
 use super::room::Room;
@@ -15,6 +16,7 @@ pub struct World {
     pub facts: HashSet<FactId>,
     pub quests: HashMap<QuestId, Quest>,
     pub items: HashMap<ItemId, Item>,
+    pub item_placements: Vec<ItemPlacement>,
     pub features: HashMap<FeatureId, RoomFeature>,
     pub npcs: HashMap<NpcId, Npc>,
     pub rooms: HashMap<RoomId, Room>,
@@ -31,6 +33,47 @@ impl World {
 
     pub fn item(&self, id: &ItemId) -> Option<&Item> {
         self.items.get(id)
+    }
+
+    pub fn item_location(&self, id: &ItemId) -> Option<&ItemLocation> {
+        self.item_placements
+            .iter()
+            .find(|placement| &placement.item_id == id)
+            .map(|placement| &placement.location)
+    }
+
+    pub fn item_ids_in_room<'a>(
+        &'a self,
+        room_id: &'a RoomId,
+    ) -> impl Iterator<Item = &'a ItemId> + 'a {
+        self.item_placements.iter().filter_map(move |placement| {
+            matches!(&placement.location, ItemLocation::Room(id) if id == room_id)
+                .then_some(&placement.item_id)
+        })
+    }
+
+    pub fn item_ids_carried_by<'a>(
+        &'a self,
+        character_id: &'a super::ids::CharacterId,
+    ) -> impl Iterator<Item = &'a ItemId> + 'a {
+        self.item_placements.iter().filter_map(move |placement| {
+            matches!(&placement.location, ItemLocation::CarriedBy(id) if id == character_id)
+                .then_some(&placement.item_id)
+        })
+    }
+
+    pub fn move_item(&mut self, item_id: &ItemId, location: ItemLocation) -> bool {
+        let Some(position) = self
+            .item_placements
+            .iter()
+            .position(|placement| &placement.item_id == item_id)
+        else {
+            return false;
+        };
+        let mut placement = self.item_placements.remove(position);
+        placement.location = location;
+        self.item_placements.push(placement);
+        true
     }
 
     pub fn feature(&self, id: &FeatureId) -> Option<&RoomFeature> {
@@ -62,7 +105,6 @@ mod tests {
             id: RoomId("start".to_string()),
             name: "Starting Room".to_string(),
             description: "A test room.".to_string(),
-            items: vec![],
             features: vec![],
             npcs: vec![],
             exits: HashMap::new(),
@@ -110,6 +152,10 @@ mod tests {
             facts: HashSet::new(),
             quests: HashMap::new(),
             items,
+            item_placements: vec![ItemPlacement {
+                item_id: ItemId("test_item".to_string()),
+                location: ItemLocation::Nowhere,
+            }],
             features,
             npcs,
             rooms,
@@ -151,22 +197,22 @@ mod tests {
     }
 
     #[test]
-    fn existing_room_can_be_mutated() {
+    fn item_location_can_be_changed() {
         let mut world = valid_world();
-
-        let room = world
-            .room_mut(&RoomId("start".to_string()))
-            .expect("starting room should exist");
-
-        room.items.push(ItemId("test_item".to_string()));
-
+        assert!(world.move_item(
+            &ItemId("test_item".to_string()),
+            ItemLocation::Room(RoomId("start".to_string()))
+        ));
+        let character_id = crate::game::ids::CharacterId("player".to_string());
+        assert!(world.move_item(
+            &ItemId("test_item".to_string()),
+            ItemLocation::CarriedBy(character_id.clone())
+        ));
         assert_eq!(
-            world
-                .room(&RoomId("start".to_string()))
-                .expect("starting room should still exist")
-                .items,
-            vec![ItemId("test_item".to_string())]
+            world.item_location(&ItemId("test_item".to_string())),
+            Some(&ItemLocation::CarriedBy(character_id))
         );
+        assert_eq!(world.item_placements.len(), 1);
     }
 
     #[test]

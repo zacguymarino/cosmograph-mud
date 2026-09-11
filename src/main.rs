@@ -17,7 +17,6 @@ fn main() {
         id: CharacterId("player".to_string()),
         name: "Player".to_string(),
         current_room: starting_room,
-        inventory: vec![],
         facts: HashSet::new(),
         quests: HashMap::new(),
     };
