@@ -50,11 +50,12 @@ fn validate_exit_destinations(world: &WorldDefinition) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_exit_item_requirements(world: &WorldDefinition) -> Result<(), String> {
+fn validate_exit_requirements(world: &WorldDefinition) -> Result<(), String> {
     for room in &world.rooms {
         for (direction, exit) in &room.exits {
-            let super::definition::ExitDefinition::ItemGated {
+            let super::definition::ExitDefinition::Conditional {
                 requires_item,
+                requires_fact,
                 failure_message,
                 ..
             } = exit
@@ -62,11 +63,29 @@ fn validate_exit_item_requirements(world: &WorldDefinition) -> Result<(), String
                 continue;
             };
 
-            if !world.items.iter().any(|item| item.id == *requires_item) {
+            if requires_item.is_none() && requires_fact.is_none() {
                 return Err(format!(
-                    "Room '{}' has exit '{}' requiring missing item '{}'",
-                    room.id, direction, requires_item
+                    "Room '{}' has conditional exit '{}' without any requirements",
+                    room.id, direction
                 ));
+            }
+
+            if let Some(requires_item) = requires_item {
+                if !world.items.iter().any(|item| item.id == *requires_item) {
+                    return Err(format!(
+                        "Room '{}' has exit '{}' requiring missing item '{}'",
+                        room.id, direction, requires_item
+                    ));
+                }
+            }
+
+            if let Some(requires_fact) = requires_fact {
+                if !world.facts.iter().any(|fact| fact.id == *requires_fact) {
+                    return Err(format!(
+                        "Room '{}' has exit '{}' requiring missing fact '{}'",
+                        room.id, direction, requires_fact
+                    ));
+                }
             }
 
             if failure_message.trim().is_empty() {
@@ -662,7 +681,7 @@ pub fn validate_world(world: &WorldDefinition) -> Result<(), String> {
     validate_unique_room_ids(world)?;
     validate_exit_directions(world)?;
     validate_exit_destinations(world)?;
-    validate_exit_item_requirements(world)?;
+    validate_exit_requirements(world)?;
     validate_starting_room(world)?;
 
     Ok(())
@@ -1791,9 +1810,10 @@ mod tests {
         let mut world = valid_world();
         world.rooms[0].exits.insert(
             "north".to_string(),
-            ExitDefinition::ItemGated {
+            ExitDefinition::Conditional {
                 destination: "start".to_string(),
-                requires_item: "missing_key".to_string(),
+                requires_item: Some("missing_key".to_string()),
+                requires_fact: None,
                 failure_message: "The door is locked.".to_string(),
             },
         );
@@ -1814,9 +1834,10 @@ mod tests {
         });
         world.rooms[0].exits.insert(
             "north".to_string(),
-            ExitDefinition::ItemGated {
+            ExitDefinition::Conditional {
                 destination: "start".to_string(),
-                requires_item: "test_key".to_string(),
+                requires_item: Some("test_key".to_string()),
+                requires_fact: None,
                 failure_message: "The door is locked.".to_string(),
             },
         );
@@ -1834,9 +1855,10 @@ mod tests {
         });
         world.rooms[0].exits.insert(
             "north".to_string(),
-            ExitDefinition::ItemGated {
+            ExitDefinition::Conditional {
                 destination: "start".to_string(),
-                requires_item: "test_key".to_string(),
+                requires_item: Some("test_key".to_string()),
+                requires_fact: None,
                 failure_message: "  ".to_string(),
             },
         );
@@ -1844,6 +1866,63 @@ mod tests {
         assert_eq!(
             validate_world(&world),
             Err("Room 'start' has exit 'north' with an empty failure message".to_string())
+        );
+    }
+
+    #[test]
+    fn fact_gated_exit_must_reference_declared_fact() {
+        let mut world = valid_world();
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::Conditional {
+                destination: "start".to_string(),
+                requires_item: None,
+                requires_fact: Some("missing_fact".to_string()),
+                failure_message: "You do not know the way.".to_string(),
+            },
+        );
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Room 'start' has exit 'north' requiring missing fact 'missing_fact'".to_string())
+        );
+    }
+
+    #[test]
+    fn fact_gated_exit_with_declared_fact_passes_validation() {
+        let mut world = valid_world();
+        world.facts.push(FactDefinition {
+            id: "known_path".to_string(),
+        });
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::Conditional {
+                destination: "start".to_string(),
+                requires_item: None,
+                requires_fact: Some("known_path".to_string()),
+                failure_message: "You do not know the way.".to_string(),
+            },
+        );
+
+        assert!(validate_world(&world).is_ok());
+    }
+
+    #[test]
+    fn conditional_exit_requires_at_least_one_requirement() {
+        let mut world = valid_world();
+        world.rooms[0].exits.insert(
+            "north".to_string(),
+            ExitDefinition::Conditional {
+                destination: "start".to_string(),
+                requires_item: None,
+                requires_fact: None,
+                failure_message: "You cannot pass.".to_string(),
+            },
+        );
+
+        assert_eq!(
+            validate_world(&world),
+            Err("Room 'start' has conditional exit 'north' without any requirements".to_string())
         );
     }
 }

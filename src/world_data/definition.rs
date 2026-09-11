@@ -41,9 +41,12 @@ pub struct RoomDefinition {
 #[serde(untagged)]
 pub enum ExitDefinition {
     Simple(String),
-    ItemGated {
+    Conditional {
         destination: String,
-        requires_item: String,
+        #[serde(default)]
+        requires_item: Option<String>,
+        #[serde(default)]
+        requires_fact: Option<String>,
         failure_message: String,
     },
 }
@@ -51,7 +54,7 @@ pub enum ExitDefinition {
 impl ExitDefinition {
     pub fn destination(&self) -> &str {
         match self {
-            Self::Simple(destination) | Self::ItemGated { destination, .. } => destination,
+            Self::Simple(destination) | Self::Conditional { destination, .. } => destination,
         }
     }
 }

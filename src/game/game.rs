@@ -258,14 +258,20 @@ impl Game {
             }];
         };
 
-        let requirement_met = match &exit.requirement {
-            None => true,
-            Some(ExitRequirement::CarryingItem(item_id)) => {
-                self.character.inventory.contains(item_id)
-            }
-        };
+        let requirements_met = exit
+            .requirements
+            .iter()
+            .all(|requirement| match requirement {
+                ExitRequirement::CarryingItem(item_id) => {
+                    self.character.inventory.contains(item_id)
+                }
+                ExitRequirement::KnowsFact(fact_id) => self.character.facts.contains(&FactKey {
+                    world_id: self.world.id.clone(),
+                    fact_id: fact_id.clone(),
+                }),
+            });
 
-        if !requirement_met {
+        if !requirements_met {
             return vec![GameEvent::MovementBlocked {
                 character_id: self.character.id.clone(),
                 room_id: current_room,
@@ -1224,13 +1230,12 @@ mod tests {
                 Direction::North,
                 Exit {
                     destination: RoomId("next_room".to_string()),
-                    requirement: Some(ExitRequirement::CarryingItem(ItemId(
+                    requirements: vec![ExitRequirement::CarryingItem(ItemId(
                         "test_item".to_string(),
-                    ))),
+                    ))],
                     failure_message: Some("The test door is locked.".to_string()),
                 },
             );
-
         let events = game.attempt_move(Direction::North);
 
         assert_eq!(
@@ -1256,9 +1261,9 @@ mod tests {
                 Direction::North,
                 Exit {
                     destination: RoomId("next_room".to_string()),
-                    requirement: Some(ExitRequirement::CarryingItem(ItemId(
+                    requirements: vec![ExitRequirement::CarryingItem(ItemId(
                         "test_item".to_string(),
-                    ))),
+                    ))],
                     failure_message: Some("The test door is locked.".to_string()),
                 },
             );
@@ -1278,6 +1283,95 @@ mod tests {
             game.character.inventory,
             vec![ItemId("test_item".to_string())]
         );
+    }
+
+    #[test]
+    fn fact_gated_exit_blocks_character_without_required_fact() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .exits
+            .insert(
+                Direction::North,
+                Exit {
+                    destination: RoomId("next_room".to_string()),
+                    requirements: vec![ExitRequirement::KnowsFact(FactId(
+                        "known_path".to_string(),
+                    ))],
+                    failure_message: Some("You do not know the way.".to_string()),
+                },
+            );
+        give_fact(&mut game, "other_world", "known_path");
+
+        let events = game.attempt_move(Direction::North);
+
+        assert!(matches!(
+            events.as_slice(),
+            [GameEvent::MovementBlocked { .. }]
+        ));
+        assert_eq!(game.character.current_room, RoomId("start".to_string()));
+    }
+
+    #[test]
+    fn fact_gated_exit_allows_character_with_world_qualified_fact() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .exits
+            .insert(
+                Direction::North,
+                Exit {
+                    destination: RoomId("next_room".to_string()),
+                    requirements: vec![ExitRequirement::KnowsFact(FactId(
+                        "known_path".to_string(),
+                    ))],
+                    failure_message: Some("You do not know the way.".to_string()),
+                },
+            );
+        give_fact(&mut game, "test_world", "known_path");
+
+        let events = game.attempt_move(Direction::North);
+
+        assert!(matches!(
+            events.first(),
+            Some(GameEvent::CharacterMoved { .. })
+        ));
+        assert_eq!(game.character.current_room, RoomId("next_room".to_string()));
+    }
+
+    #[test]
+    fn combined_exit_requires_both_item_and_fact() {
+        let mut game = game_with_character_in("start");
+        game.world
+            .room_mut(&RoomId("start".to_string()))
+            .unwrap()
+            .exits
+            .insert(
+                Direction::North,
+                Exit {
+                    destination: RoomId("next_room".to_string()),
+                    requirements: vec![
+                        ExitRequirement::CarryingItem(ItemId("test_item".to_string())),
+                        ExitRequirement::KnowsFact(FactId("known_path".to_string())),
+                    ],
+                    failure_message: Some("You are not prepared.".to_string()),
+                },
+            );
+        game.character
+            .inventory
+            .push(ItemId("test_item".to_string()));
+
+        assert!(matches!(
+            game.attempt_move(Direction::North).as_slice(),
+            [GameEvent::MovementBlocked { .. }]
+        ));
+        give_fact(&mut game, "test_world", "known_path");
+        assert!(matches!(
+            game.attempt_move(Direction::North).first(),
+            Some(GameEvent::CharacterMoved { .. })
+        ));
     }
 
     #[test]

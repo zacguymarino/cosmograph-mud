@@ -26,13 +26,22 @@ pub fn convert_room(definition: RoomDefinition) -> Result<Room, String> {
             super::definition::ExitDefinition::Simple(destination) => {
                 Exit::unrestricted(RoomId(destination))
             }
-            super::definition::ExitDefinition::ItemGated {
+            super::definition::ExitDefinition::Conditional {
                 destination,
                 requires_item,
+                requires_fact,
                 failure_message,
             } => Exit {
                 destination: RoomId(destination),
-                requirement: Some(ExitRequirement::CarryingItem(ItemId(requires_item))),
+                requirements: requires_item
+                    .into_iter()
+                    .map(|item| ExitRequirement::CarryingItem(ItemId(item)))
+                    .chain(
+                        requires_fact
+                            .into_iter()
+                            .map(|fact| ExitRequirement::KnowsFact(FactId(fact))),
+                    )
+                    .collect(),
                 failure_message: Some(failure_message),
             },
         };
@@ -410,13 +419,14 @@ mod tests {
     }
 
     #[test]
-    fn item_gated_exit_converts_to_typed_runtime_exit() {
+    fn combined_exit_requirements_convert_to_typed_runtime_requirements() {
         let mut room_definition = valid_room_definition();
         room_definition.exits.insert(
             "east".to_string(),
-            ExitDefinition::ItemGated {
+            ExitDefinition::Conditional {
                 destination: "next_room".to_string(),
-                requires_item: "test_item".to_string(),
+                requires_item: Some("test_item".to_string()),
+                requires_fact: Some("test_fact".to_string()),
                 failure_message: "The door is locked.".to_string(),
             },
         );
@@ -426,10 +436,11 @@ mod tests {
 
         assert_eq!(exit.destination, RoomId("next_room".to_string()));
         assert_eq!(
-            exit.requirement,
-            Some(ExitRequirement::CarryingItem(ItemId(
-                "test_item".to_string()
-            )))
+            exit.requirements,
+            vec![
+                ExitRequirement::CarryingItem(ItemId("test_item".to_string())),
+                ExitRequirement::KnowsFact(FactId("test_fact".to_string()))
+            ]
         );
         assert_eq!(exit.failure_message.as_deref(), Some("The door is locked."));
     }

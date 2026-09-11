@@ -115,14 +115,15 @@ mod tests {
             RoomId("old_observatory".to_string())
         );
         assert_eq!(
-            observatory_exit.requirement,
-            Some(ExitRequirement::CarryingItem(ItemId(
-                "rusty_key".to_string()
-            )))
+            observatory_exit.requirements,
+            vec![
+                ExitRequirement::CarryingItem(ItemId("rusty_key".to_string())),
+                ExitRequirement::KnowsFact(FactId("heard_about_old_observatory".to_string())),
+            ]
         );
         assert_eq!(
             observatory_exit.failure_message.as_deref(),
-            Some("The observatory door is locked. Its corroded keyhole looks oddly familiar.")
+            Some("You are not yet prepared to enter the old observatory.")
         );
     }
 }
